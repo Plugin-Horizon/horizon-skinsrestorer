@@ -1,0 +1,24 @@
+[package]
+name = "horizon-skinsrestorer-core"
+version = "0.2.0"
+edition = "2021"
+license = "GPL-3.0-only"
+publish = false
+description = "Backend side of SkinsRestorer in proxy mode for Horizon servers (derived from SkinsRestorer, GPL-3.0)"
+
+# Only crates in Horizon's Cargo.lock (docs/native-mods.md, "The mod's crate"); mysql with the
+# features crates/horizon-mod-deps names for mods, ureq as the other ports use it.
+[dependencies]
+base64 = "0.22"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+log = "0.4"
+mysql = { version = "28", default-features = false, features = ["minimal-rust", "rustls-tls-ring"], optional = true }
+ureq = { version = "2", default-features = false, features = ["tls"], optional = true }
+
+[features]
+default = ["mysql", "net"]
+mysql = ["dep:mysql"]
+# /sr status and /sr dump (HTTP).
+net = ["dep:ureq"]

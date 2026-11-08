@@ -1,0 +1,117 @@
+# horizon-skinsrestorer: the backend side of SkinsRestorer (proxy mode) as a Horizon native mod
+# (horizon-mixins bundle). Derived from SkinsRestorer, GPL-3.0. Four injections name internal functions of the engine, not
+# stable hook points, because Horizon has no hook for them yet; each says so and GAPS.md lists
+# the hook that would replace it.
+
+[mod]
+id = "skinsrestorer"
+version = "0.2.0"
+priority = 0
+
+[compatibility]
+horizon_revision = "b13dbf0687b545431172466ab4b91d19c3976405"
+
+# The logic: config, change detection, commands. `lan` (the connection code) is
+# compiled in horizon-client-lib, so the crate hangs there and the game reaches it through the
+# module below.
+[[crate]]
+id = "core"
+path = "core"
+dependent = "horizon-client-lib"
+
+# `crate::skinsrestorer::...` for the game's helpers.
+[[module]]
+id = "api"
+file = "crates/horizon-client/src/client_lib.rs"
+name = "skinsrestorer"
+source = "helpers/api.rs"
+visibility = "pub"
+
+# The joining player's profile, on the connection's thread before LoginFinished (hooks-all
+# player_profile): the stored skin is looked up and put in before anyone is sent the profile.
+[[injection]]
+id = "profile"
+kind = "HEAD"
+target = "horizon_client::lan::conn::native_player_profile"
+helper = "helpers/profile.rs"
+bindings = [
+  { name = "player", ty = "u128", value = "player" },
+  { name = "name", ty = "&str", value = "name" },
+  { name = "properties", ty = "&mut Vec<horizon_protocol::packets::login::Property>", value = "properties" },
+]
+
+# The proxy's message on sr:messagechannel (hooks-all custom_payload_from_client).
+[[injection]]
+id = "payload"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_custom_payload_from_client"
+helper = "helpers/payload.rs"
+bindings = [
+  { name = "player", ty = "u128", value = "player" },
+  { name = "channel", ty = "&str", value = "channel" },
+  { name = "data", ty = "&[u8]", value = "data" },
+]
+
+# A resource pack answer (`server.resourcePackFix`): the v2 hook also hears the answer to the server's own
+# pack, given during the configuration. No catalog name for it, so a raw target.
+[[injection]]
+id = "resource-pack"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_resource_pack_status_v2"
+helper = "helpers/resource_pack.rs"
+bindings = [
+  { name = "player", ty = "u128", value = "player" },
+  { name = "status", ty = "i32", value = "status" },
+]
+
+# Applying the core's decisions with the profile helpers (hooks-all set_profile_property,
+# refresh_player, mount; hooks-b-all play_sound_to).
+[[injection]]
+id = "tick"
+kind = "HEAD"
+target = "horizon_client::game::native_hooks::Game<'_>::native_server_tick"
+helper = "helpers/tick.rs"
+bindings = [{ name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" }]
+
+# A player who leaves is forgotten (stable hook point).
+[[injection]]
+id = "logged-out"
+hook = "player_logged_out"
+hook_version = 1
+kind = "HEAD"
+helper = "helpers/logged_out.rs"
+bindings = [{ name = "player", ty = "u128", value = "player" }]
+
+# /sr, /sr help, /sr status, /sr dump (stable hook points).
+[[injection]]
+id = "register"
+hook = "register_commands"
+hook_version = 1
+kind = "HEAD"
+helper = "helpers/register.rs"
+bindings = [{ name = "commands", ty = "&mut Vec<crate::game::native_server::NativeCommand>", value = "commands" }]
+
+[[injection]]
+id = "perform"
+hook = "perform_command"
+hook_version = 1
+kind = "HEAD"
+helper = "helpers/perform.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "player", ty = "&crate::game::native_server::NativeServerPlayer", value = "player" },
+  { name = "command", ty = "&str", value = "command" },
+  { name = "ran", ty = "&mut bool", value = "ran" },
+]
+
+[[injection]]
+id = "console"
+hook = "perform_console_command"
+hook_version = 1
+kind = "HEAD"
+helper = "helpers/console.rs"
+bindings = [
+  { name = "game", ty = "&mut crate::game::Game<'_>", value = "&mut *self" },
+  { name = "command", ty = "&str", value = "command" },
+  { name = "ran", ty = "&mut bool", value = "ran" },
+]
