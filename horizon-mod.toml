@@ -2,7 +2,7 @@ id = "skinsrestorer"
 name = "SkinsRestorer"
 version = "0.2.0"
 description = "Backend side of SkinsRestorer in proxy mode: skin selection, /sr, the skins menu. Port in progress (see PORT_NOTES.md)."
-authors = ["CoreSMP"]
+authors = ["Plugin-Horizon contributors"]
 api = "0.2"
 capabilities = ["registries"]
 
