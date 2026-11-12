@@ -310,3 +310,100 @@ fn a_loaded_resource_pack_shows_the_skin_again_without_a_dismount_or_sound() {
     off.resource_pack_status(P, 0);
     assert!(off.tick(Instant::now()).is_empty());
 }
+
+fn menu_channel(kind: &str) -> Vec<u8> {
+    crate::payload::encode_modified_utf8(kind).unwrap()
+}
+
+#[test]
+fn a_skins_menu_opens_and_a_click_sends_the_proxys_action_and_closes() {
+    let (mut c, _) = core();
+    let now = Instant::now();
+    c.joining(P, "A", Some(sample("f0f0", false)), now);
+    let mut data = menu_channel("openGUI");
+    data.extend(crate::gui::tests::menu_bytes(3));
+    assert!(c.message(P, CHANNEL, &data));
+    let opened = c.tick(now);
+    assert!(opened.iter().any(|a| matches!(a, Action::OpenMenu { player, rows: 3, slots, .. }
+        if *player == P && slots.len() == 2 && slots[0].0 == 10)));
+    // The engine's window answers the clicks: the skull's left click sends the reply and closes.
+    c.menu_opened(P, 7);
+    c.menu_clicked(P, 7, 10, 0, 0);
+    let out = c.tick(now);
+    let mut want = menu_channel("guiActionList");
+    want.extend(1i32.to_be_bytes());
+    want.extend(menu_channel("openPage"));
+    want.extend(2i32.to_be_bytes());
+    want.extend(menu_channel("main"));
+    assert!(out.contains(&Action::SendPayload { player: P, channel: CHANNEL.into(), data: want }));
+    assert!(out.contains(&Action::CloseMenu { player: P }));
+    // Clicks in another window, and a slot with no handler, do nothing.
+    c.menu_opened(P, 9);
+    c.menu_clicked(P, 7, 10, 0, 0);
+    c.menu_clicked(P, 9, 13, 0, 0);
+    assert!(c.tick(now).is_empty());
+}
+
+#[test]
+fn a_closed_or_unknown_menu_takes_no_clicks() {
+    let (mut c, _) = core();
+    let now = Instant::now();
+    c.joining(P, "A", None, now);
+    let mut data = menu_channel("openGUI");
+    data.extend(crate::gui::tests::menu_bytes(3));
+    c.message(P, CHANNEL, &data);
+    c.tick(now);
+    c.menu_opened(P, 7);
+    // A close for another window keeps the menu: the skull's click still answers (send + close).
+    c.menu_closed(P, 6);
+    c.menu_clicked(P, 7, 10, 0, 0);
+    assert_eq!(c.tick(now).len(), 2);
+    // The menu went with its close: a further click is nothing.
+    c.menu_clicked(P, 7, 10, 0, 0);
+    assert!(c.tick(now).is_empty());
+    // A menu closed by the engine is forgotten the same way.
+    c.message(P, CHANNEL, &data);
+    c.tick(now);
+    c.menu_opened(P, 8);
+    c.menu_closed(P, 8);
+    c.menu_clicked(P, 8, 10, 0, 0);
+    assert!(c.tick(now).is_empty());
+    // A menu from a player who is not on is not opened.
+    assert!(c.message(0x9999, CHANNEL, &data));
+    assert!(c.tick(now).is_empty());
+}
+
+#[test]
+fn a_skull_message_gives_a_head_with_the_hashs_textures() {
+    let (mut c, _) = core();
+    let now = Instant::now();
+    c.joining(P, "A", None, now);
+    let mut data = menu_channel("giveSkull");
+    data.extend(menu_channel("{\"text\":\"Knight\"}"));
+    data.extend(menu_channel("abc123"));
+    c.message(P, CHANNEL, &data);
+    assert_eq!(
+        c.tick(now),
+        vec![Action::GiveSkull {
+            player: P,
+            display_name: "{\"text\":\"Knight\"}".into(),
+            texture_value: crate::skins::texture_value("abc123"),
+        }]
+    );
+}
+
+#[test]
+fn leaving_closes_the_menu_state() {
+    let (mut c, _) = core();
+    let now = Instant::now();
+    c.joining(P, "A", None, now);
+    let mut data = menu_channel("openGUI");
+    data.extend(crate::gui::tests::menu_bytes(3));
+    c.message(P, CHANNEL, &data);
+    c.tick(now);
+    c.menu_opened(P, 7);
+    c.left(P);
+    c.joining(P, "A", None, now);
+    c.menu_clicked(P, 7, 10, 0, 0);
+    assert!(c.tick(now).is_empty());
+}

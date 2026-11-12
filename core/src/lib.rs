@@ -15,6 +15,7 @@
 //!
 //! The engine glue (the bundle's helpers) turns [`Action`]s into packets.
 pub mod config;
+pub mod gui;
 pub mod jobs;
 #[cfg(feature = "mysql")]
 pub mod mariadb;
@@ -22,8 +23,10 @@ pub mod mariadb;
 pub mod net;
 pub mod payload;
 pub mod property;
+pub mod skins;
 pub mod sound;
 pub mod storage;
+pub mod yaml;
 
 use config::{Config, JoinLookup};
 use jobs::{Answer, Done, Job, Jobs, Reason};
@@ -65,6 +68,30 @@ pub enum Action {
     /// the dump take a while): to a player, or to the console when `player` is None. Legacy
     /// colour codes.
     Tell { player: Option<u128>, line: String },
+    /// Open the skins menu for the player (`rows` chest rows, the title as JSON text, the slots).
+    /// The glue reports the window with [`menu_opened`].
+    OpenMenu {
+        player: u128,
+        rows: u8,
+        title: String,
+        slots: Vec<(usize, gui::MenuItem)>,
+    },
+    /// Close the menu the mod opened for the player.
+    CloseMenu { player: u128 },
+    /// Give the player a player head showing `texture_value` (base64 textures), named by the JSON
+    /// text `display_name` (`/skull`).
+    GiveSkull {
+        player: u128,
+        display_name: String,
+        texture_value: String,
+    },
+}
+
+/// The skins menu a player has open: its window once the glue has opened it.
+#[derive(Debug)]
+struct OpenMenu {
+    window: Option<i32>,
+    inventory: gui::Inventory,
 }
 
 /// What the mod knows of an online player.
@@ -108,6 +135,7 @@ pub struct Core {
     queued: Vec<Action>,
     /// Lines from command threads, taken by the next tick.
     outbox: Arc<Mutex<Vec<Action>>>,
+    menus: HashMap<u128, OpenMenu>,
     pub stats: Stats,
 }
 
@@ -124,6 +152,7 @@ impl Core {
             next_poll: None,
             queued: Vec::new(),
             outbox: Arc::new(Mutex::new(Vec::new())),
+            menus: HashMap::new(),
             stats: Stats::default(),
         }
     }
@@ -228,6 +257,84 @@ impl Core {
         self.players.remove(&player);
         self.prefetched.remove(&player);
         self.later.retain(|(_, p, _)| *p != player);
+        self.menus.remove(&player);
+    }
+
+    /// `openGUI` from the proxy: the skins menu of the player who is on. A menu that does not
+    /// decode is logged and nothing opens.
+    fn open_gui(&mut self, player: u128, data: &[u8]) {
+        let Some(inventory) = gui::decode(data) else {
+            log::warn!("[SkinsRestorer] could not read the skins menu from the proxy");
+            return;
+        };
+        let slots = inventory
+            .items
+            .iter()
+            .map(|(slot, item)| (*slot, gui::menu_item(item)))
+            .collect();
+        let action = Action::OpenMenu {
+            player,
+            rows: inventory.rows,
+            title: inventory.title.clone(),
+            slots,
+        };
+        self.menus.insert(
+            player,
+            OpenMenu {
+                window: None,
+                inventory,
+            },
+        );
+        self.queued.push(action);
+    }
+
+    /// The glue opened the player's menu as `window`.
+    pub fn menu_opened(&mut self, player: u128, window: i32) {
+        if let Some(m) = self.menus.get_mut(&player) {
+            m.window = Some(window);
+        }
+    }
+
+    /// A click in the player's menu (`window`, `slot`, `button`, `mode` as the engine numbers
+    /// them). The item's handler for that click goes back to the proxy as `guiActionList`; a
+    /// handler that closes the menu queues the close. Clicks in another window are ignored.
+    pub fn menu_clicked(&mut self, player: u128, window: i32, slot: i32, button: i32, mode: i32) {
+        let Some(menu) = self.menus.get(&player) else {
+            return;
+        };
+        if menu.window != Some(window) {
+            return;
+        }
+        let Ok(slot) = usize::try_from(slot) else {
+            return;
+        };
+        let Some((_, item)) = menu.inventory.items.iter().find(|(s, _)| *s == slot) else {
+            return;
+        };
+        let Some(handler) = gui::handler(item, gui::click_type(button, mode)).cloned() else {
+            return;
+        };
+        if !handler.actions.is_empty() {
+            match gui::encode_actions(&handler.actions) {
+                Some(data) => self.queued.push(Action::SendPayload {
+                    player,
+                    channel: payload::CHANNEL.to_owned(),
+                    data,
+                }),
+                None => log::warn!("[SkinsRestorer] a menu action is too long to send"),
+            }
+        }
+        if handler.close {
+            self.menus.remove(&player);
+            self.queued.push(Action::CloseMenu { player });
+        }
+    }
+
+    /// The player's menu closed (by them, the server or the proxy).
+    pub fn menu_closed(&mut self, player: u128, window: i32) {
+        if self.menus.get(&player).is_some_and(|m| m.window == Some(window)) {
+            self.menus.remove(&player);
+        }
     }
 
     /// A player's client answered a resource pack (`status` as the game numbers it: 0 successfully
@@ -284,12 +391,15 @@ impl Core {
                     }
                 }
             }
-            Some(payload::ServerMessage::OpenGui) => {
-                log::warn!("[SkinsRestorer] the proxy sent the skins menu; menus are not supported here (GAPS.md)")
-            }
-            Some(payload::ServerMessage::GiveSkull { .. }) => {
-                log::warn!("[SkinsRestorer] the proxy sent a skull; giving skulls is not supported here (GAPS.md)")
-            }
+            Some(payload::ServerMessage::OpenGui { data }) => self.open_gui(player, &data),
+            Some(payload::ServerMessage::GiveSkull {
+                display_name,
+                texture_hash,
+            }) => self.queued.push(Action::GiveSkull {
+                player,
+                display_name,
+                texture_value: skins::texture_value(&texture_hash),
+            }),
             Some(payload::ServerMessage::Unknown(kind)) => log::warn!(
                 "[SkinsRestorer] Received unknown channel payload {kind:?} from proxy (Make sure the server and proxy are running the same version of SkinsRestorer)"
             ),
@@ -654,9 +764,9 @@ fn help_lines(query: &str) -> Vec<String> {
 
 static CORE: OnceLock<Mutex<Core>> = OnceLock::new();
 
-/// The config: the defaults, then the original's `plugins/SkinsRestorer/config.yml` when there is
-/// one, then `config/skinsrestorer.toml` over both. Without either, the TOML file is written
-/// with the defaults.
+/// The config: the defaults, then `config/skinsrestorer.toml` (a fallback for the keys the original's
+/// `plugins/SkinsRestorer/config.yml` leaves out), and the original's file over both. Without
+/// either, the TOML file is written with the defaults.
 pub fn load_config(dir: &Path) -> Config {
     let yaml_path = dir.join("plugins").join("SkinsRestorer").join("config.yml");
     let yaml = std::fs::read_to_string(&yaml_path).ok();
@@ -677,9 +787,16 @@ pub fn load_config(dir: &Path) -> Config {
     }
 }
 
-fn build(cfg: Config) -> Core {
+fn build(cfg: Config, dir: &Path) -> Core {
+    // The recommended skins are read only when `api.fetchRecommendedSkins` is on (the original
+    // schedules nothing otherwise).
+    let recommendations = if cfg.api.fetch_recommended_skins {
+        skins::Recommendations::load(&dir.join("plugins").join("SkinsRestorer").join("recommendations.json"))
+    } else {
+        skins::Recommendations::default()
+    };
     let storage = if cfg.database.kind.eq_ignore_ascii_case("MYSQL") {
-        open_storage(&cfg)
+        open_storage(&cfg, recommendations)
     } else {
         // FILE is the original's default and what a proxy-mode backend normally has: the proxy
         // sends the skins, nothing is read from storage.
@@ -695,7 +812,7 @@ fn build(cfg: Config) -> Core {
 }
 
 #[cfg(feature = "mysql")]
-fn open_storage(cfg: &Config) -> Option<Arc<Storage>> {
+fn open_storage(cfg: &Config, recommendations: skins::Recommendations) -> Option<Arc<Storage>> {
     let statements = match storage::Statements::new(cfg.horizon.schema.clone(), &cfg.database.table_prefix) {
         Ok(s) => s,
         Err(e) => {
@@ -707,11 +824,12 @@ fn open_storage(cfg: &Config) -> Option<Arc<Storage>> {
     Some(Arc::new(Storage {
         statements,
         sql: Box::new(mariadb::MariaDb::new(&cfg.database, timeout)),
+        recommendations,
     }))
 }
 
 #[cfg(not(feature = "mysql"))]
-fn open_storage(_: &Config) -> Option<Arc<Storage>> {
+fn open_storage(_: &Config, _: skins::Recommendations) -> Option<Arc<Storage>> {
     log::warn!("[SkinsRestorer] built without the mysql feature");
     None
 }
@@ -720,7 +838,7 @@ fn open_storage(_: &Config) -> Option<Arc<Storage>> {
 pub fn with<R>(f: impl FnOnce(&mut Core) -> R) -> R {
     let core = CORE.get_or_init(|| {
         let dir = std::env::current_dir().unwrap_or_default();
-        let mut core = build(load_config(&dir));
+        let mut core = build(load_config(&dir), &dir);
         core.behind_proxy = Some(detect_behind_proxy(&dir));
         Mutex::new(core)
     });
@@ -775,6 +893,21 @@ pub fn joining(player: u128, name: &str, forwarded: Option<Property>) -> Option<
 
 pub fn left(player: u128) {
     with(|c| c.left(player))
+}
+
+/// The glue opened the player's skins menu as `window` (see [`Action::OpenMenu`]).
+pub fn menu_opened(player: u128, window: i32) {
+    with(|c| c.menu_opened(player, window))
+}
+
+/// A click in a menu (`native_menu_clicked`).
+pub fn menu_clicked(player: u128, window: i32, slot: i32, button: i32, mode: i32) {
+    with(|c| c.menu_clicked(player, window, slot, button, mode))
+}
+
+/// A menu closed (`native_menu_closed`).
+pub fn menu_closed(player: u128, window: i32) {
+    with(|c| c.menu_closed(player, window))
 }
 
 pub fn resource_pack_status(player: u128, status: i32) {

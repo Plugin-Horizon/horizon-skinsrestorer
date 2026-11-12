@@ -3,9 +3,10 @@
 # plugins/SkinsRestorer/config.yml is there either).
 #
 # The original asks for the SAME config.yml on the proxy and on every backend. This port reads
-# plugins/SkinsRestorer/config.yml when it exists (same key names and defaults as the original);
-# a config/skinsrestorer.toml laid over it wins key by key. Section and key names below are the
-# original's config.yml paths. Keys that only this port has are in [horizon].
+# plugins/SkinsRestorer/config.yml when it exists (same key names and defaults as the original).
+# This file is the FALLBACK: it is used for the keys config.yml leaves out, and as the whole config
+# when config.yml is missing. Section and key names below are the original's config.yml paths.
+# Keys that only this port has are in [horizon].
 
 [database]
 # FILE, MYSQL or POSTGRESQL. Only MYSQL (MariaDB or MySQL) is readable here; with FILE the
@@ -54,10 +55,46 @@ playerHeadChatObjects = false
 [api]
 # Adds Ely.by to the /sr status checks.
 elyByEnabled = false
+# true: plugins/SkinsRestorer/recommendations.json is read (the recommended skins).
+fetchRecommendedSkins = true
 
 [dev]
 # true: /sr status prints every service check, not only the failed ones.
 debug = false
+
+# The lists below are the original's config.yml lists. The backend reads them only so that the file is
+# read in full: the proxy shows the menus, runs the commands and makes the default skins.
+[gui.custom]
+enabled = true
+list = []
+
+[gui.recommendations]
+enabled = true
+list = []
+
+[gui.players]
+enabled = false
+list = []
+
+[commands.disabledSkins]
+enabled = false
+list = []
+
+[commands.restrictSkinUrls]
+enabled = false
+list = []
+
+[commands.customHelp]
+enabled = false
+message = []
+
+[storage.defaultSkins]
+enabled = false
+list = []
+
+[proxy.notAllowedCommandServers]
+enabled = false
+list = []
 
 [horizon]
 # When a join's skin is looked up in the database (only with database.type MYSQL). The original's

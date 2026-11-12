@@ -1,6 +1,7 @@
-//! The mod's config (`config/skinsrestorer.toml`), with the original's key names where a key
-//! means the same.
-use serde::Deserialize;
+//! The mod's config: the original's `plugins/SkinsRestorer/config.yml` where it exists, else the
+//! TOML file (`config/skinsrestorer.toml`), with the original's key names where a key means the same.
+use crate::yaml::{self, Node};
+use serde::{Deserialize, Serialize};
 
 pub const DEFAULT: &str = include_str!("../default-config.toml");
 
@@ -23,7 +24,7 @@ where
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Config {
     pub database: Database,
     pub server: Server,
@@ -31,9 +32,54 @@ pub struct Config {
     pub api: Api,
     pub dev: Dev,
     pub horizon: Horizon,
+    pub gui: Gui,
+    pub commands: Commands,
+    pub storage: StorageConfig,
+    pub proxy: Proxy,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+/// A list the original reads from `config.yml`. The backend has no use for most of them (the
+/// proxy shows the menus and runs the commands); they are read so that the whole file is read.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct Listed {
+    pub enabled: bool,
+    pub list: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct Gui {
+    pub custom: Listed,
+    pub recommendations: Listed,
+    pub players: Listed,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Commands {
+    pub disabled_skins: Listed,
+    pub restrict_skin_urls: Listed,
+    pub custom_help: CustomHelp,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct CustomHelp {
+    pub enabled: bool,
+    pub message: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StorageConfig {
+    pub default_skins: Listed,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Proxy {
+    pub not_allowed_command_servers: Listed,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Database {
     #[serde(rename = "type")]
@@ -50,7 +96,7 @@ pub struct Database {
     pub connection_options: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Server {
     pub resource_pack_fix: bool,
@@ -61,19 +107,19 @@ pub struct Server {
     pub proxy_mode: ProxyMode,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct SoundConfig {
     pub enabled: bool,
     pub value: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProxyMode {
     pub detection: String,
     pub api: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Advanced {
     pub disable_on_join_skins: bool,
@@ -83,18 +129,20 @@ pub struct Advanced {
     pub player_head_chat_objects: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Api {
     pub ely_by_enabled: bool,
+    /// The recommended skins are loaded from `plugins/SkinsRestorer/recommendations.json` only when this is on.
+    pub fetch_recommended_skins: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct Dev {
     pub debug: bool,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Horizon {
     pub join_lookup: String,
@@ -104,7 +152,7 @@ pub struct Horizon {
     pub schema: Schema,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Schema {
     pub selection: String,
@@ -152,15 +200,17 @@ pub enum JoinLookup {
 }
 
 impl Config {
-    /// The defaults, then `yaml` (the original's config.yml, when there is one), then `text`
-    /// (the TOML file), each laid over the one before key by key.
+    /// The defaults, then `text` (the TOML file), then `yaml` (the original's config.yml, when there
+    /// is one), each laid over the one before key by key. So the TOML file is only a fallback: it
+    /// fills the keys the original file leaves out (the `[horizon]` section, and anything the file
+    /// does not set), and a key the original file has is the original's.
     pub fn parse_layers(yaml: Option<&str>, text: &str) -> Result<Self, String> {
         let mut value: toml::Value = toml::from_str(DEFAULT).map_err(|e| e.to_string())?;
-        if let Some(y) = yaml {
-            merge(&mut value, yaml_to_toml(y));
-        }
         let user: toml::Value = toml::from_str(text).map_err(|e| e.to_string())?;
         merge(&mut value, user);
+        if let Some(y) = yaml {
+            merge(&mut value, yaml_to_toml(y).map_err(|e| format!("config.yml: {e}"))?);
+        }
         value.try_into().map_err(|e: toml::de::Error| e.to_string())
     }
 
@@ -219,70 +269,35 @@ impl Config {
     }
 }
 
-fn insert_path(table: &mut toml::map::Map<String, toml::Value>, path: &[String], key: String, value: toml::Value) {
-    match path.split_first() {
-        None => {
-            table.insert(key, value);
-        }
-        Some((first, rest)) => {
-            let entry = table
-                .entry(first.clone())
-                .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
-            if let toml::Value::Table(t) = entry {
-                insert_path(t, rest, key, value);
-            }
-        }
-    }
+/// The original's `config.yml` as a TOML tree, read by the vendored YAML parser ([`crate::yaml`]):
+/// maps keep their keys, scalars are text except booleans (SnakeYAML's resolution), lists are arrays
+/// of text, and a null (`key:` with nothing under it) is left out. Keys this mod has no field for
+/// are carried along and dropped by [`Config`]'s deserialisation.
+pub fn yaml_to_toml(text: &str) -> Result<toml::Value, String> {
+    let node = yaml::parse(text).map_err(|e| e.to_string())?;
+    Ok(node_to_toml(&node).unwrap_or_else(|| toml::Value::Table(toml::map::Map::new())))
 }
 
-/// The original's `config.yml` as a TOML tree: nested `key:` maps by indentation, `key: value`
-/// scalars (quotes stripped; `true`/`false` typed, numbers left as text for [`lenient`]), comments and blank lines
-/// skipped. Lists (`- item`) and anything else this mod has no key for are ignored.
-pub fn yaml_to_toml(text: &str) -> toml::Value {
-    let mut root = toml::map::Map::new();
-    // The open map keys, with the indentation of the key that opened each.
-    let mut path: Vec<(usize, String)> = Vec::new();
-    for raw in text.lines() {
-        let line = raw.trim_end();
-        let body = line.trim_start();
-        if body.is_empty() || body.starts_with('#') || body.starts_with('-') {
-            continue;
-        }
-        let indent = line.len() - body.len();
-        let Some((key, rest)) = body.split_once(':') else {
-            continue;
-        };
-        let key = key.trim().trim_matches(|c| c == '"' || c == '\'').to_owned();
-        while path.last().is_some_and(|(i, _)| *i >= indent) {
-            path.pop();
-        }
-        let rest = rest.trim();
-        // A trailing comment on an unquoted scalar.
-        let rest = match rest.find(" #") {
-            Some(i) if !rest.starts_with('"') && !rest.starts_with('\'') => rest[..i].trim(),
-            _ => rest,
-        };
-        if rest.is_empty() {
-            path.push((indent, key));
-            continue;
-        }
-        let value = if rest.len() >= 2
-            && ((rest.starts_with('"') && rest.ends_with('"')) || (rest.starts_with('\'') && rest.ends_with('\'')))
-        {
-            toml::Value::String(rest[1..rest.len() - 1].to_owned())
-        } else if rest.eq_ignore_ascii_case("true") {
-            toml::Value::Boolean(true)
-        } else if rest.eq_ignore_ascii_case("false") {
-            toml::Value::Boolean(false)
-        } else if rest.starts_with('[') || rest.starts_with('{') {
-            continue;
-        } else {
-            toml::Value::String(rest.to_owned())
-        };
-        let keys: Vec<String> = path.iter().map(|(_, k)| k.clone()).collect();
-        insert_path(&mut root, &keys, key, value);
+fn node_to_toml(node: &Node) -> Option<toml::Value> {
+    if node.is_null() {
+        return None;
     }
-    toml::Value::Table(root)
+    Some(match node {
+        Node::Map { entries, .. } => {
+            let mut table = toml::map::Map::new();
+            for e in entries {
+                if let Some(v) = node_to_toml(&e.value) {
+                    table.insert(e.key.clone(), v);
+                }
+            }
+            toml::Value::Table(table)
+        }
+        Node::Seq { items, .. } => toml::Value::Array(items.iter().filter_map(node_to_toml).collect()),
+        Node::Scalar { .. } => match node.tag() {
+            "bool" => toml::Value::Boolean(node.as_bool()?),
+            _ => toml::Value::String(node.as_str()?.to_owned()),
+        },
+    })
 }
 
 #[cfg(test)]
@@ -362,10 +377,13 @@ server:
         assert!(c.server.remount_player_on_skin_update, "other keys keep the default");
         assert_eq!(c.server.sound.value, "none");
         assert!(c.proxy_mode(false));
-        // The TOML file wins over the yaml, key by key.
-        let c = Config::parse_layers(Some(YAML), "[database]\nhost = \"other\"\n").unwrap();
+        // The TOML file is the fallback: the original's key wins, the keys it leaves out come from TOML.
+        let c = Config::parse_layers(Some(YAML), "[database]\nhost = \"other\"\n[horizon]\njoinLookup = \"never\"\n").unwrap();
+        assert_eq!(c.database.host, "db.internal");
+        assert_eq!(c.horizon.join_lookup, "never");
+        // Without the original's file the TOML file is all there is.
+        let c = Config::parse_layers(None, "[database]\nhost = \"other\"\n").unwrap();
         assert_eq!(c.database.host, "other");
-        assert_eq!(c.database.kind, "MYSQL");
     }
 
     #[test]
@@ -375,5 +393,63 @@ server:
         let text = c.dump_json().to_string();
         assert!(!text.contains("hunter2") && !text.contains("database"));
         assert!(text.contains("dismountPlayerOnSkinUpdate"));
+    }
+
+    const LISTS: &str = r#"# lists and a key the mod does not keep
+gui:
+  custom:
+    enabled: true
+    list:
+      - "Alpha"
+      - beta
+  recommendations:
+    list: []
+commands:
+  customHelp:
+    enabled: false
+    message:
+      - "<gray>one"
+api:
+  mineskinAPIKey: sk-test-SECRET-VALUE-0042
+  fetchRecommendedSkins: no
+proxy:
+  notAllowedCommandServers:
+    enabled: yes
+    list:
+      - lobby
+database:
+  host:
+  port: 3308
+"#;
+
+    #[test]
+    fn the_lists_of_config_yml_are_read() {
+        let c = Config::parse_layers(Some(LISTS), "").unwrap();
+        assert!(c.gui.custom.enabled);
+        assert_eq!(c.gui.custom.list, vec!["Alpha".to_owned(), "beta".to_owned()]);
+        assert!(c.gui.recommendations.list.is_empty());
+        assert_eq!(c.commands.custom_help.message, vec!["<gray>one".to_owned()]);
+        assert!(c.proxy.not_allowed_command_servers.enabled, "yes is a boolean");
+        assert_eq!(c.proxy.not_allowed_command_servers.list, vec!["lobby".to_owned()]);
+        assert!(!c.api.fetch_recommended_skins);
+        // A key with nothing under it is null: the default stays.
+        assert_eq!(c.database.host, "localhost");
+        assert_eq!(c.database.port, 3308);
+    }
+
+    #[test]
+    fn the_api_key_is_never_kept_or_dumped() {
+        let c = Config::parse_layers(Some(LISTS), "").unwrap();
+        let secret = "sk-test-SECRET-VALUE-0042";
+        assert!(!toml::to_string(&c).unwrap().contains(secret));
+        assert!(!c.dump_json().to_string().contains(secret));
+        assert!(!c.dump_json().to_string().to_ascii_lowercase().contains("mineskin"));
+        let text = format!("{:?}", c);
+        assert!(!text.contains(secret));
+    }
+
+    #[test]
+    fn a_broken_config_yml_is_an_error_not_a_partial_read() {
+        assert!(Config::parse_layers(Some("a:\n\tb: 1\n"), "").is_err());
     }
 }

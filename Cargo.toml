@@ -1,0 +1,12 @@
+[package]
+name = "mod-skinsrestorer"
+version = "0.2.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# The launcher (or stage.py) points this at the Horizon source the game is built from.
+horizon-mod-api = { git = "https://github.com/arismoko/horizon" }
+# Only for the title's JSON text (crates already in Horizon's Cargo.lock, as the core uses serde_json too).
+serde_json = "1"
+horizon-skinsrestorer-core = { path = "core" }

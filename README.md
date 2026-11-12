@@ -1,14 +1,24 @@
 # horizon-skinsrestorer
 
-> **Unofficial Rust port of SkinsRestorer for the Horizon server (https://github.com/horizon-rust/horizon). Not affiliated with or endorsed by the SkinsRestorer authors.**
+> **Unofficial Rust port of SkinsRestorer for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the SkinsRestorer authors.**
 
-The backend side of [SkinsRestorer](https://skinsrestorer.net) for [Horizon](https://github.com/horizon-rust/horizon),
+The backend side of [SkinsRestorer](https://skinsrestorer.net) for [Horizon](https://github.com/arismoko/horizon),
 the Rust server/client for Minecraft 26.3, as a native mod. On a proxy network the proxy keeps
 running SkinsRestorer (commands, selections, storage); a Horizon backend with this mod behaves as
 a Paper backend with the plugin in **proxy mode** does.
 
 Derived from SkinsRestorer (<https://github.com/SkinsRestorer/SkinsRestorer>, GPL-3.0).
 Not affiliated with SkinsRestorer or its authors.
+
+> **Built for and working only with [arismoko/horizon](https://github.com/arismoko/horizon)** (the Horizon fork that carries the mod API). [horizon-rust/horizon](https://github.com/horizon-rust/horizon) is experimental for mods and not supported: the earlier version for its native hooks / horizon-mixins is frozen on the `horizon-plain` branch (work stopped on 2026-11-12).
+
+## Which Horizon
+
+This is a native trait mod: `horizon-mod.toml`, a `Cargo.toml` that depends on `horizon-mod-api`, `src/lib.rs` with the hooks, and the plugin logic in the `core/` crate (plain Rust, no engine needed for its tests).
+
+- Pin: `[native] horizon = "54090ee36c4e2c7b43b66db864220c577b94b7e0"` in `horizon-mod.toml` (game `26.3`). That is a development build of arismoko/horizon `main` plus mod API additions that are not all merged upstream yet, so a stock `main` may lack some host methods this mod calls until they land.
+- It compiled and loaded on that build and was smoke-tested there; it has not seen a long run with real players. Treat it as experimental.
+- Feature descriptions below were written for the earlier horizon-rust version; where they name engine calls (`native_*`) or old file paths, read them as descriptions only. The Known gaps list is current.
 
 ## What it does (the original's proxy-mode backend)
 
@@ -52,35 +62,25 @@ yet reads as no skin. The mod never writes.
 
 ## Build
 
-A horizon-mixins bundle (this folder): one crate (`core`, using only crates in Horizon's
-`Cargo.lock`: `base64`, `serde`, `serde_json`, `toml`, `log`, `mysql`, `ureq`), one module and seven
-injections.
+Build it as a native trait mod with arismoko's launcher (see the "native mods" how-to in the arismoko/horizon docs):
 
 ```sh
-horizon-mixins apply --workspace <horizon source> --mods <folder containing this bundle> --out <stage>
-cd <stage> && cargo build --profile fast -p horizon-client --no-default-features --locked
+horizon-launcher native-build <path to this folder> --server-output <dir> --version <tag> --trust-native-code
 ```
 
-`horizon_revision` in `horizon-mixin.toml` pins the Horizon commit the bundle was written against.
-Unit tests: `cargo test` in `core/` with Horizon's `Cargo.lock` copied next to it.
+`--trust-native-code` is your consent to compile and run this code inside the server. The logic crate tests run without the engine: `(cd core && cargo test)`.
 
-The profile, payload and tick injections need Horizon's `hooks-all` branch (`native_player_profile`,
-`native_custom_payload_from_client`, `native_send_custom_payload_to_player`,
-`native_set_profile_property`, `native_refresh_player`, `native_dismount`, `native_eject_passengers`)
-and `hooks-b-all` (`native_play_sound_to`). [GAPS.md](GAPS.md) lists what is still missing and
-[STATUS.md](STATUS.md) the feature-by-feature state against the original's source.
+## Known gaps
 
-## Untested
+What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: ...)` in `src/lib.rs`):
 
-Everything that touches the engine: the bundle has not been built or run yet. The core's logic
-(config, wire format, storage statements on a fake database, change handling, commands) has unit
-tests on synthetic data.
+- Resetting to the default skin is skipped (a profile property cannot be cleared).
+- `/skull` cannot give a textured head, and skin menu heads are plain heads (no profile component).
+- A joining player keeps the skin the proxy forwarded; the join lookup is not hooked.
+- Mount keeping across a skin refresh is missing.
+- The apply path needs a SQL back end or proxy payloads; it was not run against either.
 
 ## Licence
 
 Derived from SkinsRestorer (<https://github.com/SkinsRestorer/SkinsRestorer>, GPL-3.0). This port is
 GPL-3.0-only as well, see [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
-## Contributing
-
-Pull requests and improvements are always welcome! Open an issue or a PR -- direct pushes to main are disabled, every change goes through review.

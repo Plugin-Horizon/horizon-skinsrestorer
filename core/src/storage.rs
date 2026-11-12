@@ -5,6 +5,7 @@
 //! layout needs no rebuild; the defaults are the original's.
 use crate::config::Schema;
 use crate::property::{uuid_dashed, uuid_plain, Property};
+use crate::skins::{self, Recommendations, RECOMMENDATION_PREFIX};
 
 /// What kind of record a selection names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -161,6 +162,8 @@ pub trait Sql: Send + Sync {
 pub struct Storage {
     pub statements: Statements,
     pub sql: Box<dyn Sql>,
+    /// The recommended skins a `sr-recommendation-<id>` selection names (no table holds them).
+    pub recommendations: Recommendations,
 }
 
 impl Storage {
@@ -201,6 +204,12 @@ impl Storage {
     }
 
     pub fn skin(&self, sel: &Selection) -> Result<Option<Property>, String> {
+        // `SkinStorageImpl.getSkinDataByIdentifier`: a recommendation is read from its cache.
+        if sel.kind == SkinType::Custom {
+            if let Some(id) = sel.identifier.strip_prefix(RECOMMENDATION_PREFIX) {
+                return Ok(self.recommendations.get(id));
+            }
+        }
         // An account skin's identifier is a UUID; it is written the table's way. A custom skin's
         // name is lower case (`CustomSkinData.sanitizeCustomSkinName`).
         let identifier = match sel.kind {
@@ -228,15 +237,18 @@ impl Storage {
             variant,
             ..Binds::default()
         };
-        let Some(row) = self.run(Query::Skin(sel.kind), &binds)? else {
-            return Ok(None);
-        };
-        Ok(row
+        let row = self.run(Query::Skin(sel.kind), &binds)?.unwrap_or_default();
+        let found = row
             .first()
             .cloned()
             .flatten()
             .filter(|v| !v.is_empty())
-            .map(|value| Property::new(value, row.get(1).cloned().flatten())))
+            .map(|value| Property::new(value, row.get(1).cloned().flatten()));
+        // A custom skin with no row of its own: the bundled skin of that name, if there is one.
+        Ok(match (found, sel.kind) {
+            (None, SkinType::Custom) => skins::hardcoded(&sel.identifier),
+            (found, _) => found,
+        })
     }
 
     /// The skin a player's selection names: None when there is no selection or its record is
@@ -333,6 +345,7 @@ pub(crate) mod tests {
         let st = Storage {
             statements: Statements::new(c.horizon.schema, &c.database.table_prefix).unwrap(),
             sql: Box::new(mem.clone()),
+            recommendations: Recommendations::default(),
         };
         (st, mem)
     }
@@ -414,5 +427,40 @@ pub(crate) mod tests {
         assert!(st.skin_of(2).is_err());
         mem.fail.store(true, std::sync::atomic::Ordering::Relaxed);
         assert!(st.skin_of(3).is_err());
+    }
+
+    #[test]
+    fn a_recommendation_is_read_from_the_cache_not_the_table() {
+        let (mut st, mem) = storage();
+        st.recommendations = crate::skins::Recommendations::parse(
+            r#"{"version":1,"skins":[{"skinId":"7f","skinName":"Knight","value":"dmFsdWU=","signature":"c2ln"}]}"#,
+        )
+        .unwrap();
+        mem.put(
+            SEL,
+            &[&uuid_dashed(11)],
+            vec![Some("sr-recommendation-7f".into()), Some("CUSTOM".into()), None],
+        );
+        match st.skin_of(11).unwrap() {
+            Lookup::Skin(_, p) => assert_eq!(p.value, "dmFsdWU="),
+            other => panic!("{other:?}"),
+        }
+        // An id the cache does not know is a dangling selection.
+        mem.put(
+            SEL,
+            &[&uuid_dashed(12)],
+            vec![Some("sr-recommendation-zz".into()), Some("CUSTOM".into()), None],
+        );
+        assert!(matches!(st.skin_of(12).unwrap(), Lookup::Dangling(_)));
+    }
+
+    #[test]
+    fn a_custom_selection_with_no_row_shows_the_bundled_skin_of_that_name() {
+        let (st, mem) = storage();
+        mem.put(SEL, &[&uuid_dashed(13)], vec![Some("Steve".into()), Some("CUSTOM".into()), None]);
+        let steve = crate::skins::hardcoded("steve").unwrap();
+        assert!(matches!(st.skin_of(13).unwrap(), Lookup::Skin(_, p) if p == steve));
+        mem.put(SEL, &[&uuid_dashed(14)], vec![Some("nobody".into()), Some("CUSTOM".into()), None]);
+        assert!(matches!(st.skin_of(14).unwrap(), Lookup::Dangling(_)));
     }
 }

@@ -29,20 +29,41 @@ pub struct Ack {
 pub enum ServerMessage {
     /// Apply this skin; None is the original's empty property (no textures).
     SkinUpdate { property: Option<Property>, ack: Option<Ack> },
-    /// `/skins` on the proxy: the inventory menu (not supported, see GAPS.md).
-    OpenGui,
-    /// `/skull` on the proxy.
-    GiveSkull { texture_hash: String },
+    /// `/skins` on the proxy: the menu's inventory, still gzip-compressed (`gui::decode` reads it).
+    OpenGui { data: Vec<u8> },
+    /// `/skull` on the proxy: the item's display name (JSON text) and the head's texture hash.
+    GiveSkull { display_name: String, texture_hash: String },
     /// A type this version does not know (the original logs a warning).
     Unknown(String),
 }
 
-struct Reader<'a> {
+/// A `DataInput` over bytes: big-endian numbers, `writeUTF` strings.
+pub(crate) struct Reader<'a> {
     data: &'a [u8],
     at: usize,
 }
 
 impl<'a> Reader<'a> {
+    pub(crate) fn new(data: &'a [u8]) -> Self {
+        Self { data, at: 0 }
+    }
+    /// What is left, all of it.
+    pub(crate) fn rest(&mut self) -> &'a [u8] {
+        let s = &self.data[self.at..];
+        self.at = self.data.len();
+        s
+    }
+    pub(crate) fn i32(&mut self) -> Option<i32> {
+        Some(i32::from_be_bytes(self.take(4)?.try_into().ok()?))
+    }
+    pub(crate) fn boolean(&mut self) -> Option<bool> {
+        Some(self.take(1)?[0] != 0)
+    }
+    /// `DataInput.readUTF`.
+    pub(crate) fn string(&mut self) -> Option<String> {
+        let n = self.u16()? as usize;
+        decode_modified_utf8(self.take(n)?)
+    }
     fn take(&mut self, n: usize) -> Option<&'a [u8]> {
         let end = self.at.checked_add(n)?;
         let s = self.data.get(self.at..end)?;
@@ -54,14 +75,6 @@ impl<'a> Reader<'a> {
     }
     fn i64(&mut self) -> Option<i64> {
         Some(i64::from_be_bytes(self.take(8)?.try_into().ok()?))
-    }
-    fn boolean(&mut self) -> Option<bool> {
-        Some(self.take(1)?[0] != 0)
-    }
-    /// `DataInput.readUTF`.
-    fn string(&mut self) -> Option<String> {
-        let n = self.u16()? as usize;
-        decode_modified_utf8(self.take(n)?)
     }
     /// `UUID_CODEC`: most significant long, then least.
     fn uuid(&mut self) -> Option<u128> {
@@ -166,10 +179,13 @@ pub fn decode(data: &[u8]) -> Option<ServerMessage> {
                 ack: None,
             }
         }
-        "openGUI" => ServerMessage::OpenGui,
+        "openGUI" => ServerMessage::OpenGui {
+            data: r.rest().to_vec(),
+        },
         "giveSkull" => {
-            let _display_name = r.string()?;
+            let display_name = r.string()?;
             ServerMessage::GiveSkull {
+                display_name,
                 texture_hash: r.string()?,
             }
         }
@@ -259,11 +275,17 @@ pub(crate) mod tests {
 
     #[test]
     fn other_types_and_bad_bytes() {
-        assert_eq!(decode(&utf("openGUI")), Some(ServerMessage::OpenGui));
+        assert_eq!(decode(&utf("openGUI")), Some(ServerMessage::OpenGui { data: vec![] }));
         let mut d = utf("giveSkull");
         d.extend(utf("{\"text\":\"x\"}"));
         d.extend(utf("abc123"));
-        assert_eq!(decode(&d), Some(ServerMessage::GiveSkull { texture_hash: "abc123".into() }));
+        assert_eq!(
+            decode(&d),
+            Some(ServerMessage::GiveSkull {
+                display_name: "{\"text\":\"x\"}".into(),
+                texture_hash: "abc123".into()
+            })
+        );
         assert_eq!(decode(&utf("brandNew")), Some(ServerMessage::Unknown("brandNew".into())));
         assert_eq!(decode(b""), None);
         assert_eq!(decode(&[0, 9, b'a']), None);

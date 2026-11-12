@@ -1,7 +1,7 @@
 [package]
 name = "horizon-skinsrestorer-core"
 version = "0.2.0"
-edition = "2021"
+edition = "2024"
 license = "GPL-3.0-only"
 publish = false
 description = "Backend side of SkinsRestorer in proxy mode for Horizon servers (derived from SkinsRestorer, GPL-3.0)"
@@ -10,6 +10,8 @@ description = "Backend side of SkinsRestorer in proxy mode for Horizon servers (
 # features crates/horizon-mod-deps names for mods, ureq as the other ports use it.
 [dependencies]
 base64 = "0.22"
+# gzip of the skins menu (openGUI); in Horizon's Cargo.lock already.
+flate2 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "1"
