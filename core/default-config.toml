@@ -1,0 +1,137 @@
+# horizon-skinsrestorer: the backend side of SkinsRestorer in proxy mode.
+# Written to config/skinsrestorer.toml in the server folder on the first start (when no
+# plugins/SkinsRestorer/config.yml is there either).
+#
+# The original asks for the SAME config.yml on the proxy and on every backend. This port reads
+# plugins/SkinsRestorer/config.yml when it exists (same key names and defaults as the original).
+# This file is the FALLBACK: it is used for the keys config.yml leaves out, and as the whole config
+# when config.yml is missing. Section and key names below are the original's config.yml paths.
+# Keys that only this port has are in [horizon].
+
+[database]
+# FILE, MYSQL or POSTGRESQL. Only MYSQL (MariaDB or MySQL) is readable here; with FILE the
+# backend works from the proxy's plugin messages alone, as the original does in proxy mode.
+type = "FILE"
+host = "localhost"
+port = 3306
+database = "db"
+username = "root"
+password = "pass"
+maxPoolSize = 10
+tablePrefix = "sr_"
+# Only sslMode is read (disable / trust / verify); serverTimezone is accepted and ignored.
+connectionOptions = "sslMode=trust&serverTimezone=UTC"
+
+[server]
+# Accepted for config compatibility; not used (see GAPS.md).
+resourcePackFix = true
+dismountPlayerOnSkinUpdate = true
+# Needs dismountPlayerOnSkinUpdate: with that off, remount is off too.
+remountPlayerOnSkinUpdate = true
+dismountPassengersOnSkinUpdate = false
+
+[server.sound]
+enabled = true
+# "[category@]<sound>[, volume[, pitch[, seed]]]": a leading "~" is the original's public-sound
+# flag. "none" or an empty value plays nothing. Volume and pitch default to 1.
+value = "ENTITY_PLAYER_TELEPORT, 0.7"
+
+[server.proxyMode]
+# AUTO: proxy mode when the server runs behind a Velocity proxy (forwarding secret set).
+# ENABLED / DISABLED force it.
+detection = "AUTO"
+# The Java API in proxy mode; there is no Java here. Accepted and unused.
+api = true
+
+[advanced]
+# true: never apply a stored skin on join (forwarded skins are shown as always).
+disableOnJoinSkins = false
+enablePaperJoinListener = true
+teleportRefresh = false
+# true: /sr status and /sr dump make no network connection.
+noConnections = false
+playerHeadChatObjects = false
+
+[api]
+# Adds Ely.by to the /sr status checks.
+elyByEnabled = false
+# true: plugins/SkinsRestorer/recommendations.json is read (the recommended skins).
+fetchRecommendedSkins = true
+
+[dev]
+# true: /sr status prints every service check, not only the failed ones.
+debug = false
+
+# The lists below are the original's config.yml lists. The backend reads them only so that the file is
+# read in full: the proxy shows the menus, runs the commands and makes the default skins.
+[gui.custom]
+enabled = true
+list = []
+
+[gui.recommendations]
+enabled = true
+list = []
+
+[gui.players]
+enabled = false
+list = []
+
+[commands.disabledSkins]
+enabled = false
+list = []
+
+[commands.restrictSkinUrls]
+enabled = false
+list = []
+
+[commands.customHelp]
+enabled = false
+message = []
+
+[storage.defaultSkins]
+enabled = false
+list = []
+
+[proxy.notAllowedCommandServers]
+enabled = false
+list = []
+
+[horizon]
+# When a join's skin is looked up in the database (only with database.type MYSQL). The original's
+# backend never does this in proxy mode (the proxy puts the skin into the login profile); here it
+# only fills a join whose forwarded profile has no skin:
+#   "auto"     "missing" in proxy mode, "always" without a proxy
+#   "missing"  only when the forwarded profile has no textures
+#   "always"   always; a stored selection replaces the forwarded textures
+#   "never"
+joinLookup = "auto"
+# Longest wait for the database while a player logs in (on the connection's thread, not the tick).
+joinTimeoutMs = 1500
+# Every n seconds the online players' selections are read again (database.type MYSQL). The
+# original has nothing like it (the proxy tells the backend), so 0 (off) is the default.
+pollSeconds = 0
+# Operator level that stands in for the permission nodes when no permissions provider answers.
+adminLevel = 3
+
+# The SQL the port runs. These are the original's tables and columns (its MySQL adapter, 15.x):
+#   {prefix}players      uuid, skin_identifier, skin_variant, skin_type, offline_mode_warning_dismissed
+#   {prefix}player_skins uuid, last_known_name, value, signature, timestamp
+#   {prefix}url_skins    url, mine_skin_id, value, signature, skin_variant   (key: url + variant)
+#   {prefix}url_index    url, skin_variant
+#   {prefix}custom_skins name, display_name, value, signature
+#   {prefix}legacy_skins name, value, signature
+# {prefix} is tablePrefix; :uuid, :identifier and :variant are bound. UUIDs are stored dashed.
+[horizon.schema]
+selection = "SELECT skin_identifier, skin_type, skin_variant FROM {prefix}players WHERE uuid = :uuid"
+player = "SELECT value, signature FROM {prefix}player_skins WHERE uuid = :identifier"
+url = "SELECT value, signature FROM {prefix}url_skins WHERE url = :identifier AND skin_variant = :variant"
+urlIndex = "SELECT skin_variant FROM {prefix}url_index WHERE url = :identifier"
+custom = "SELECT value, signature FROM {prefix}custom_skins WHERE name = :identifier"
+legacy = "SELECT value, signature FROM {prefix}legacy_skins WHERE name = :identifier"
+# The values of the selection's skin_type column (the original's SkinType enum names).
+typePlayer = "PLAYER"
+typeUrl = "URL"
+typeCustom = "CUSTOM"
+typeLegacy = "LEGACY"
+# How a UUID is written in the tables: "dashed" (8-4-4-4-12, the original's) or "plain".
+uuidFormat = "dashed"
