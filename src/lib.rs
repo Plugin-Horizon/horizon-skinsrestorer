@@ -20,7 +20,7 @@ use horizon_skinsrestorer_core::{self as core, Action, Refresh};
 use mod_api::{
     Command, CommandArgumentValue, CommandSource, Flow, Hooks, Identifier, ItemStack,
     IPayloadContext, IPayloadHandler, MenuClickedEvent, MenuClosedEvent, PayloadBytes, PayloadId,
-    PlayerLoggedOutEvent, RegisterCommandsEvent, Registrar, RegistrationContext, ResourcePackStatusEvent, RunModCommandEvent, ServerAboutToStartEvent,
+    PlayerCommandsSentEvent, PlayerLoggedOutEvent, RegisterCommandsEvent, Registrar, RegistrationContext, ResourcePackStatusEvent, RunModCommandEvent, ServerAboutToStartEvent,
     ServerHost, ServerTickEvent, ServerTickPhase, SoundSource, Text,
 };
 
@@ -294,6 +294,28 @@ impl Hooks for Mod {
             for tail in ["help [query:text]", "status", "dump"] {
                 event.commands.push(Command::new(&format!("{root} {tail}")));
             }
+        }
+    }
+
+    /// Tab: `/sr` and `/skinsrestorer` are listed only for a sender with one of the admin nodes of
+    /// `core::Sub::nodes` (the same nodes `run_mod_command` checks; the console is not a player here).
+    fn player_commands_sent(&self, host: &mut dyn ServerHost, event: &mut PlayerCommandsSentEvent<'_>) {
+        const ADMIN_NODES: [&str; 5] = [
+            "skinsrestorer.admincommand",
+            "skinsrestorer.admin",
+            "skinsrestorer.admincommand.*",
+            "skinsrestorer.admincommand.status",
+            "skinsrestorer.admincommand.dump",
+        ];
+        let may = host
+            .player(event.player)
+            .is_some_and(|p| ADMIN_NODES.iter().any(|n| p.has_permission(&*host, *n)));
+        if !may {
+            event.names.retain(|n| {
+                let lower = n.to_ascii_lowercase();
+                let bare = lower.rsplit(':').next().unwrap_or("");
+                bare != "sr" && bare != "skinsrestorer"
+            });
         }
     }
 
