@@ -1,6 +1,6 @@
 //! Database work off the tick: lookups go to a worker thread and come back on the next tick.
-use crate::property::Property;
-use crate::storage::{Lookup, Storage};
+use crate::horizon_skinsrestorer_core::property::Property;
+use crate::horizon_skinsrestorer_core::storage::{Lookup, Storage};
 use std::sync::mpsc;
 use std::sync::Arc;
 

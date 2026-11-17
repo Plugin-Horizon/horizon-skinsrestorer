@@ -1,11 +1,11 @@
 //! The core's behaviour on synthetic data (no real database, no real player).
 use super::*;
-use crate::jobs::InlineJobs;
-use crate::payload::{tests::v3, Ack, CHANNEL};
-use crate::property::tests::sample;
-use crate::property::uuid_dashed;
-use crate::storage::tests::{select_custom, storage, CUSTOM, PLAYER, SEL};
-use crate::storage::MemorySql;
+use crate::horizon_skinsrestorer_core::jobs::InlineJobs;
+use crate::horizon_skinsrestorer_core::payload::{tests::v3, Ack, CHANNEL};
+use crate::horizon_skinsrestorer_core::property::tests::sample;
+use crate::horizon_skinsrestorer_core::property::uuid_dashed;
+use crate::horizon_skinsrestorer_core::storage::tests::{select_custom, storage, CUSTOM, PLAYER, SEL};
+use crate::horizon_skinsrestorer_core::storage::MemorySql;
 
 const P: u128 = 0x1111;
 
@@ -122,7 +122,7 @@ fn an_ack_request_is_answered_and_the_empty_skin_clears() {
         panic!("{a:?}")
     };
     assert_eq!((*player, channel.as_str()), (P, CHANNEL));
-    assert_eq!(data, &crate::payload::encode_ack(&ack).unwrap());
+    assert_eq!(data, &crate::horizon_skinsrestorer_core::payload::encode_ack(&ack).unwrap());
     // The empty property (value and signature empty) takes the textures away.
     let empty = Property::new("", Some(String::new()));
     c.message(P, CHANNEL, &v3(&empty, None));
@@ -312,7 +312,7 @@ fn a_loaded_resource_pack_shows_the_skin_again_without_a_dismount_or_sound() {
 }
 
 fn menu_channel(kind: &str) -> Vec<u8> {
-    crate::payload::encode_modified_utf8(kind).unwrap()
+    crate::horizon_skinsrestorer_core::payload::encode_modified_utf8(kind).unwrap()
 }
 
 #[test]
@@ -321,7 +321,7 @@ fn a_skins_menu_opens_and_a_click_sends_the_proxys_action_and_closes() {
     let now = Instant::now();
     c.joining(P, "A", Some(sample("f0f0", false)), now);
     let mut data = menu_channel("openGUI");
-    data.extend(crate::gui::tests::menu_bytes(3));
+    data.extend(crate::horizon_skinsrestorer_core::gui::tests::menu_bytes(3));
     assert!(c.message(P, CHANNEL, &data));
     let opened = c.tick(now);
     assert!(opened.iter().any(|a| matches!(a, Action::OpenMenu { player, rows: 3, slots, .. }
@@ -350,7 +350,7 @@ fn a_closed_or_unknown_menu_takes_no_clicks() {
     let now = Instant::now();
     c.joining(P, "A", None, now);
     let mut data = menu_channel("openGUI");
-    data.extend(crate::gui::tests::menu_bytes(3));
+    data.extend(crate::horizon_skinsrestorer_core::gui::tests::menu_bytes(3));
     c.message(P, CHANNEL, &data);
     c.tick(now);
     c.menu_opened(P, 7);
@@ -387,7 +387,7 @@ fn a_skull_message_gives_a_head_with_the_hashs_textures() {
         vec![Action::GiveSkull {
             player: P,
             display_name: "{\"text\":\"Knight\"}".into(),
-            texture_value: crate::skins::texture_value("abc123"),
+            texture_value: crate::horizon_skinsrestorer_core::skins::texture_value("abc123"),
         }]
     );
 }
@@ -398,7 +398,7 @@ fn leaving_closes_the_menu_state() {
     let now = Instant::now();
     c.joining(P, "A", None, now);
     let mut data = menu_channel("openGUI");
-    data.extend(crate::gui::tests::menu_bytes(3));
+    data.extend(crate::horizon_skinsrestorer_core::gui::tests::menu_bytes(3));
     c.message(P, CHANNEL, &data);
     c.tick(now);
     c.menu_opened(P, 7);

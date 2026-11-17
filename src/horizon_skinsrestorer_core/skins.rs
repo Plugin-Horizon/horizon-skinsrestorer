@@ -2,7 +2,7 @@
 //! (`hardcoded_skins.json`, bundled in `data/` from SkinsRestorer's resources, GPL-3.0) that a
 //! CUSTOM selection falls back to, the recommendation cache (`plugins/SkinsRestorer/recommendations.json`,
 //! read for the `sr-recommendation-<id>` selections), and the textures value of a player head.
-use crate::property::Property;
+use crate::horizon_skinsrestorer_core::property::Property;
 use base64::Engine;
 use std::collections::HashMap;
 use std::path::Path;
@@ -11,7 +11,7 @@ use std::sync::OnceLock;
 /// `SkinStorageImpl.RECOMMENDATION_PREFIX`.
 pub const RECOMMENDATION_PREFIX: &str = "sr-recommendation-";
 
-const HARDCODED: &str = include_str!("../data/hardcoded_skins.json");
+const HARDCODED: &str = include_str!("../../data/skinsrestorer/data/hardcoded_skins.json");
 
 #[derive(serde::Deserialize)]
 struct HardcodedEntry {

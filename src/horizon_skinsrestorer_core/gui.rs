@@ -7,8 +7,8 @@
 //!
 //! Engine-free: [`Inventory`] and [`MenuItem`] are what the glue turns into a native menu, and
 //! [`encode_actions`] is the reply the proxy reads.
-use crate::payload::{encode_modified_utf8, Reader};
-use crate::skins;
+use crate::horizon_skinsrestorer_core::payload::{encode_modified_utf8, Reader};
+use crate::horizon_skinsrestorer_core::skins;
 use std::io::Read;
 
 /// The most a menu's bytes may inflate to (six rows of slots and their text is a few KiB).

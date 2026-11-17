@@ -1,9 +1,9 @@
 //! The mod's config: the original's `plugins/SkinsRestorer/config.yml` where it exists, else the
 //! TOML file (`config/skinsrestorer.toml`), with the original's key names where a key means the same.
-use crate::yaml::{self, Node};
+use crate::horizon_skinsrestorer_core::yaml::{self, Node};
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT: &str = include_str!("../default-config.toml");
+pub const DEFAULT: &str = include_str!("../../data/skinsrestorer/default-config.toml");
 
 /// A number written as a number or as text (the YAML reader keeps scalars as text).
 fn lenient<'de, D, T>(d: D) -> Result<T, D::Error>
@@ -269,7 +269,7 @@ impl Config {
     }
 }
 
-/// The original's `config.yml` as a TOML tree, read by the vendored YAML parser ([`crate::yaml`]):
+/// The original's `config.yml` as a TOML tree, read by the vendored YAML parser ([`crate::horizon_skinsrestorer_core::yaml`]):
 /// maps keep their keys, scalars are text except booleans (SnakeYAML's resolution), lists are arrays
 /// of text, and a null (`key:` with nothing under it) is left out. Keys this mod has no field for
 /// are carried along and dropped by [`Config`]'s deserialisation.

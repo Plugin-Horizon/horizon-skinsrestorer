@@ -6,26 +6,48 @@
 //!   `config/skinsrestorer.toml` (the core writes the defaults there on first start). Its defaults use
 //!   `database.type = FILE`, so no MariaDB is opened.
 //! - `/sr` and `/skinsrestorer` (`help`, `status`, `dump`): `register_commands` + `run_mod_command`, for
-//!   players and the console. Admin nodes are answered by `player.has_permission` (provider, else op level 2).
+//!   players and the console. Admin nodes are typed nodes (`permission_gather_nodes`), queried with
+//!   `permission_bool`, default operator level 2.
 //! - The skins menu: `menu_clicked`, `menu_closed` and `host.open_menu` / `host.close_menu`. Items have
-//!   names and lore; head textures and the glint are still missing.
-//! - Skin changes: `server_tick` drains the core's actions and applies them with `player.set_profile_property`
-//!   and `player.refresh`. A reset to the default skin is still missing.
+//!   no names or lore (HMOD-GAP(item-display)); head textures and the glint are still missing.
+//! - Skin changes: `server_tick` drains the core's actions. Writing the profile textures and refreshing
+//!   the player have no API on main (HMOD-GAP(profile-write), HMOD-GAP(player-refresh)), so no skin is
+//!   applied. A reset to the default skin is still missing.
 //! - The proxy's plugin messages: `sr:messagechannel` is a raw play channel (`play_raw`, arismoko #3209);
 //!   skin updates arrive through its handler and the ack goes out with `player.send_payload`.
-use horizon_skinsrestorer_core::gui::MenuItem;
-use horizon_skinsrestorer_core::property::Property;
-use horizon_skinsrestorer_core::sound::Sound;
-use horizon_skinsrestorer_core::{self as core, Action, Refresh};
+
+pub mod horizon_skinsrestorer_core;
+use crate::horizon_skinsrestorer_core::gui::MenuItem;
+use crate::horizon_skinsrestorer_core::property::Property;
+use crate::horizon_skinsrestorer_core::sound::Sound;
+use crate::horizon_skinsrestorer_core::{self as core, Action, Refresh};
 use mod_api::{
     Command, CommandArgumentValue, CommandSource, Flow, Hooks, Identifier, ItemStack,
-    IPayloadContext, IPayloadHandler, MenuClickedEvent, MenuClosedEvent, PayloadBytes, PayloadId,
-    PlayerCommandsSentEvent, PlayerLoggedOutEvent, RegisterCommandsEvent, Registrar, RegistrationContext, ResourcePackStatusEvent, RunModCommandEvent, ServerAboutToStartEvent,
-    ServerHost, ServerTickEvent, ServerTickPhase, SoundSource, Text,
+    IPayloadContext, IPayloadHandler, MenuClickedEvent, MenuClosedEvent, MenuReplace, NodeDefault,
+    PayloadBytes, PayloadHandleError, PayloadId, PermissionGatherNodesEvent, PermissionLevel,
+    PermissionNode, PermissionValueType, PlayerCommandsSentEvent, PlayerLoggedOutEvent,
+    RegisterCommandsEvent, Registrar, RegistrationContext, ResourcePackStatusEvent,
+    RunModCommandEvent, ServerAboutToStartEvent, ServerHost, ServerTickEvent, ServerTickPhase,
+    SoundSource, Text,
 };
 
 /// The proxy's channel (`sr:messagechannel`): skin updates in, the ack out.
 const PROXY_CHANNEL: &str = "sr:messagechannel";
+
+/// The admin nodes of `/sr` (the core's `Sub::nodes`, and the Tab filter). Each is a typed Boolean node declared
+/// at gathering with the operator level 2 as its default. The old `skinsrestorer.admincommand.*` wildcard is not
+/// queried: a node name cannot contain `*`, so only the exact nodes are asked.
+const ADMIN_NODES: [&str; 4] = [
+    "skinsrestorer.admincommand",
+    "skinsrestorer.admin",
+    "skinsrestorer.admincommand.status",
+    "skinsrestorer.admincommand.dump",
+];
+
+/// The typed node for one admin node name.
+fn admin_node(name: &str) -> PermissionNode {
+    PermissionNode::new(name, PermissionValueType::Boolean)
+}
 
 #[derive(Default)]
 struct Mod;
@@ -34,8 +56,10 @@ struct Mod;
 struct ProxyInbox;
 
 impl IPayloadHandler for ProxyInbox {
-    fn handle(&self, payload: PayloadBytes, context: &mut dyn IPayloadContext) -> Result<(), String> {
-        let player = context.player().map_err(|e| format!("{e:?}"))?;
+    fn handle(&self, payload: PayloadBytes, context: &mut dyn IPayloadContext) -> Result<(), PayloadHandleError> {
+        let player = context
+            .player()
+            .map_err(|e| PayloadHandleError::Failed(format!("{e:?}")))?;
         let _ = core::message(player.uuid(), PROXY_CHANNEL, &payload.0);
         Ok(())
     }
@@ -115,27 +139,21 @@ fn sound_source(category: &str) -> Option<SoundSource> {
 /// here, so the skin stays as it was.
 // TODO(arismoko-api: player_clear_profile_property): a None property (no textures) cannot be written;
 // the reset to the default skin is skipped.
+// HMOD-GAP(profile-write): main has no setter for a player's profile properties (`textures`). Every skin
+// change is refused here, so no skin is applied at all; the core's actions still run without it.
 fn set_profile_textures(host: &mut dyn ServerHost, player: u128, property: Option<&Property>) -> bool {
     let Some(p) = host.player(player) else {
         return false;
     };
-    match property {
-        Some(prop) => p.set_profile_property(
-            host,
-            "textures",
-            &prop.value,
-            prop.signature.as_deref(),
-        ),
-        None => false,
-    }
+    let _ = (p, property);
+    false
 }
 
 /// Shows the player's changed skin to everyone who sees them (`player_refresh`: hidden and shown again
 /// over two ticks). Their own view keeps the old skin until they change level or join again.
+// HMOD-GAP(player-refresh): main has no per-player tracker refresh; the new skin is not shown to others.
 fn refresh_player(host: &mut dyn ServerHost, player: u128) {
-    if let Some(p) = host.player(player) {
-        let _ = p.refresh(host);
-    }
+    let _ = (host, player);
 }
 
 /// One skin change, as the core decided it (`server.*OnSkinUpdate`, `server.sound`). Same order as the
@@ -176,11 +194,12 @@ fn play_sound(host: &mut dyn ServerHost, player: u128, sound: &Sound) {
 /// One menu entry: the engine item with its name and lore (`ItemStack::set_display`).
 // TODO(arismoko-api: stack_components): the head's texture (`minecraft:profile`) and the glint are not
 // set, so every head is a plain head and the entry does not glint.
+// HMOD-GAP(item-display): main has no ItemStack setter for a custom name or lore; entries keep the bare item.
 fn menu_item(host: &mut dyn ServerHost, item: &MenuItem) -> Option<ItemStack> {
-    let mut stack = item_stack(host, item.material)?;
+    let stack = item_stack(host, item.material)?;
     let name = (!item.name.is_empty()).then(|| json_text(host, &item.name));
     let lore: Vec<Text> = item.lore.iter().map(|line| json_text(host, line)).collect();
-    let _ = stack.set_display(host, name.as_ref(), &lore);
+    let _ = (name, lore);
     Some(stack)
 }
 
@@ -201,7 +220,8 @@ fn open_menu(
         }
     }
     let title = json_text(host, title);
-    match host.open_menu(player, rows, title, items) {
+    // MenuReplace::CloseFirst is vanilla's default (the old call had no such argument; see HMOD_PORT.md).
+    match host.open_menu(player, rows, title, items, MenuReplace::CloseFirst) {
         Ok(Some(window)) => core::menu_opened(player, window),
         Ok(None) => log("the skins menu did not open (no window)"),
         Err(_) => log("the skins menu did not open (stack write refused)"),
@@ -281,6 +301,16 @@ impl Hooks for Mod {
             .play_raw(PayloadId(PROXY_CHANNEL.into()), Some(std::sync::Arc::new(ProxyInbox)));
     }
 
+    /// Declares the admin nodes of `/sr`, each defaulting to operator level 2.
+    fn permission_gather_nodes(&self, event: &mut PermissionGatherNodesEvent<'_>) {
+        for name in ADMIN_NODES {
+            let _ = event.nodes.add(
+                admin_node(name),
+                NodeDefault::Level(PermissionLevel::from_level(2)),
+            );
+        }
+    }
+
     fn server_about_to_start(&self, _: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
         // Builds the core now (config, recommended skins, storage), not on the first tick.
         let _ = core::admin_level();
@@ -300,16 +330,16 @@ impl Hooks for Mod {
     /// Tab: `/sr` and `/skinsrestorer` are listed only for a sender with one of the admin nodes of
     /// `core::Sub::nodes` (the same nodes `run_mod_command` checks; the console is not a player here).
     fn player_commands_sent(&self, host: &mut dyn ServerHost, event: &mut PlayerCommandsSentEvent<'_>) {
-        const ADMIN_NODES: [&str; 5] = [
-            "skinsrestorer.admincommand",
-            "skinsrestorer.admin",
-            "skinsrestorer.admincommand.*",
-            "skinsrestorer.admincommand.status",
-            "skinsrestorer.admincommand.dump",
-        ];
-        let may = host
-            .player(event.player)
-            .is_some_and(|p| ADMIN_NODES.iter().any(|n| p.has_permission(&*host, *n)));
+        let mut may = false;
+        if let Some(p) = host.player(event.player) {
+            for name in ADMIN_NODES {
+                // Any error is a denial.
+                if p.permission_bool(host, &admin_node(name)).unwrap_or(false) {
+                    may = true;
+                    break;
+                }
+            }
+        }
         if !may {
             event.names.retain(|n| {
                 let lower = n.to_ascii_lowercase();
@@ -344,12 +374,21 @@ impl Hooks for Mod {
             line.push_str(query);
         }
         // Admin nodes (skinsrestorer.admin*) are the permission provider's answer, or the operator level 2
-        // without one (`has_permission`). Other nodes are open to everyone; the console has every node.
+        // without one. Other nodes are open to everyone; the console has every node. The typed queries need
+        // `&mut` host, so the admin nodes are answered once here, before the core's `Fn` check runs.
         let lines = {
-            let host: &dyn ServerHost = &*host;
+            let mut granted: Vec<&str> = Vec::new();
+            if let Some(p) = player {
+                for name in ADMIN_NODES {
+                    if p.permission_bool(host, &admin_node(name)).unwrap_or(false) {
+                        granted.push(name);
+                    }
+                }
+            }
             let allowed = move |node: &str| {
                 !node.starts_with("skinsrestorer.admin")
-                    || player.map_or(true, |p| p.has_permission(host, node))
+                    || player.is_none()
+                    || granted.iter().any(|g| *g == node)
             };
             core::command(sender, &line, &allowed)
         };

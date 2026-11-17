@@ -3,8 +3,8 @@
 //! Loads each original file with the port's own loader and prints only key paths: which keys of the
 //! file the loader reads, which it does not, and whether it parses. Never a value: a serde message
 //! can quote a value, so a load that fails prints the fact, not the message.
-use horizon_skinsrestorer_core::config::{yaml_to_toml, Config};
-use horizon_skinsrestorer_core::yaml::{self, Node};
+use mod_skinsrestorer::horizon_skinsrestorer_core::config::{yaml_to_toml, Config};
+use mod_skinsrestorer::horizon_skinsrestorer_core::yaml::{self, Node};
 use std::collections::BTreeSet;
 
 /// The key paths of the file's maps, leaves (scalars, lists, empty maps) only.
