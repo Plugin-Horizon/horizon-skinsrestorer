@@ -25,7 +25,7 @@ use mod_api::{
     Command, CommandArgumentValue, CommandSource, Flow, Hooks, Identifier, ItemStack,
     IPayloadContext, IPayloadHandler, MenuClickedEvent, MenuClosedEvent, MenuReplace, NodeDefault,
     PayloadBytes, PayloadHandleError, PayloadId, PermissionGatherNodesEvent, PermissionLevel,
-    PermissionNode, PermissionValueType, PlayerCommandsSentEvent, PlayerLoggedOutEvent,
+    PermissionNode, PermissionValueType, PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
     RegisterCommandsEvent, Registrar, RegistrationContext, ResourcePackStatusEvent,
     RunModCommandEvent, ServerAboutToStartEvent, ServerHost, ServerTickEvent, ServerTickPhase,
     SoundSource, Text,
@@ -411,9 +411,24 @@ impl Hooks for Mod {
         apply_actions(host, core::tick());
     }
 
+    fn player_logged_in(&self, host: &mut dyn ServerHost, event: &mut PlayerLoggedInEvent<'_>) {
+        // The core only answers messages (ack, menu, skull) of a player it knows. The forwarded textures
+        // come from the profile; a replacement the join lookup might return cannot be written yet
+        // (HMOD-GAP(profile-write)), so it is dropped.
+        let forwarded = host
+            .player(event.player)
+            .and_then(|p| host.players().player_profile(p))
+            .and_then(|profile| {
+                profile
+                    .properties
+                    .into_iter()
+                    .find(|prop| prop.name == "textures")
+            })
+            .map(|prop| Property::new(prop.value, prop.signature));
+        let _ = core::joining(event.player, event.name, forwarded);
+    }
+
     fn player_logged_out(&self, _: &mut dyn ServerHost, event: &mut PlayerLoggedOutEvent<'_>) {
-        // TODO(arismoko-api: player_profile): the join lookup (core::profile) needs the profile hook on
-        // login, so a joining player keeps the skin the proxy forwarded.
         core::left(event.player);
     }
 
