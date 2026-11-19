@@ -22,3 +22,5 @@ Round 1
   - `PayloadHandleError`, `MenuReplace`, `PermissionLevel::from_level(2)` (assumed i32 argument), `NodeDefault` imported from the `mod_api` root.
   - The wildcard drop changes who can use `/sr` admin subcommands when a permission provider grants only the wildcard.
   - `run_mod_command` admin answers are precomputed for the four declared nodes; any other `skinsrestorer.admin*` name the core asks is denied (fail-closed).
+
+- Audit round: `player_logged_in` now calls `core::joining`, so the core knows the player: the proxy ack, `openGUI` and `giveSkull` messages and resource-pack status are handled. A skin found by the join lookup is not applied (HMOD-GAP(profile-write)). README/config comments corrected (`adminLevel` unused, level 2 default).

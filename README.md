@@ -39,8 +39,8 @@ This is a native trait mod: `horizon-mod.toml`, a `Cargo.toml` that depends on `
   `/sr dump` (uploads the support report to bytebin.lucko.me and prints the link). Permission nodes:
   `skinsrestorer.admincommand` (root, help), `skinsrestorer.admincommand.status`,
   `skinsrestorer.admincommand.dump`; `skinsrestorer.admin` and `skinsrestorer.admincommand.*` also allow
-  everything but `dump`, as in the original. Without a permissions provider the operator level
-  `horizon.adminLevel` stands in (Bukkit's default for these nodes is "op"). The console may do all.
+  everything but `dump`, as in the original. Without a permissions provider operator level 2
+  stands in (Bukkit's default for these nodes is "op"); `horizon.adminLevel` is not read. The console may do all.
   The skin commands (`/skin`, `/skull`, `/skins`) stay on the proxy.
 
 ## Config
@@ -76,7 +76,7 @@ What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: .
 
 - Resetting to the default skin is skipped (a profile property cannot be cleared).
 - `/skull` cannot give a textured head, and skin menu heads are plain heads (no profile component).
-- A joining player keeps the skin the proxy forwarded; the join lookup is not hooked.
+- A joining player is registered with the core on login (so acks, the menu and skulls work), but a stored skin the join lookup finds cannot be written into the profile (no profile setter).
 - Mount keeping across a skin refresh is missing.
 - The apply path needs a SQL back end or proxy payloads; it was not run against either.
 

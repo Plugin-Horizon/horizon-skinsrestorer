@@ -23,7 +23,7 @@ tablePrefix = "sr_"
 connectionOptions = "sslMode=trust&serverTimezone=UTC"
 
 [server]
-# Accepted for config compatibility; not used (see GAPS.md).
+# Re-shows the skin after a resource pack finished loading (needs a profile setter to take effect).
 resourcePackFix = true
 dismountPlayerOnSkinUpdate = true
 # Needs dismountPlayerOnSkinUpdate: with that off, remount is off too.
@@ -110,7 +110,7 @@ joinTimeoutMs = 1500
 # Every n seconds the online players' selections are read again (database.type MYSQL). The
 # original has nothing like it (the proxy tells the backend), so 0 (off) is the default.
 pollSeconds = 0
-# Operator level that stands in for the permission nodes when no permissions provider answers.
+# Not read: the admin nodes default to operator level 2 (declared at permission gathering).
 adminLevel = 3
 
 # The SQL the port runs. These are the original's tables and columns (its MySQL adapter, 15.x):
