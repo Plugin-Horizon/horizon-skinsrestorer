@@ -417,7 +417,7 @@ impl Hooks for Mod {
         // (HMOD-GAP(profile-write)), so it is dropped.
         let forwarded = host
             .player(event.player)
-            .and_then(|p| host.players().player_profile(p))
+            .and_then(|p| p.profile(&*host))
             .and_then(|profile| {
                 profile
                     .properties
