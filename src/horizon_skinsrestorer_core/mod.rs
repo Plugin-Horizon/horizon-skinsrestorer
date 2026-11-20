@@ -171,7 +171,18 @@ impl Core {
             dismount: s.dismount_player_on_skin_update,
             remount: s.dismount_player_on_skin_update && s.remount_player_on_skin_update,
             dismount_passengers: s.dismount_passengers_on_skin_update,
-            sound: s.sound.enabled.then(|| sound::parse(&s.sound.value)).flatten(),
+            sound: s
+                .sound
+                .enabled
+                .then(|| {
+                    let parsed = sound::parse(&s.sound.value);
+                    let none = s.sound.value.is_empty() || s.sound.value.eq_ignore_ascii_case("none");
+                    if parsed.is_none() && !none {
+                        log::warn!("[SkinsRestorer] Invalid sound value in config: {}", s.sound.value);
+                    }
+                    parsed
+                })
+                .flatten(),
         }
     }
 
@@ -749,11 +760,26 @@ const HELP: [(&str, &str); 3] = [
 /// `MinecraftHelp` output of the original's cloud help, as a list: the guess is the layout, not
 /// the text (cloud's own wording is not in the SkinsRestorer repository).
 fn help_lines(query: &str) -> Vec<String> {
+    help_lines_for(query, &|_| true)
+}
+
+/// The sub-command each `HELP` entry stands for.
+fn help_sub(syntax: &str) -> Sub {
+    match syntax {
+        "/sr status" => Sub::Status,
+        "/sr dump" => Sub::Dump,
+        _ => Sub::Help(String::new()),
+    }
+}
+
+/// `help_lines`, listing only the entries `visible` lets through (the original's `queryCommands(.., sender)`
+/// hides the commands a sender may not run).
+pub fn help_lines_for(query: &str, visible: &dyn Fn(&Sub) -> bool) -> Vec<String> {
     let q = query.trim().to_ascii_lowercase();
     let mut out = vec![format!("\u{a7}6Help Menu: \u{a7}7/sr help {q}").trim_end().to_owned()];
     for (syntax, description) in HELP {
         let plain = syntax.trim_start_matches('/').to_ascii_lowercase();
-        if q.is_empty() || plain.contains(&q) {
+        if visible(&help_sub(syntax)) && (q.is_empty() || plain.contains(&q)) {
             out.push(format!("\u{a7}e{syntax} \u{a7}7- {description}"));
         }
     }
@@ -932,6 +958,10 @@ pub fn command(sender: Option<u128>, args: &str, allowed: &dyn Fn(&str) -> bool)
     if sender.is_some() && !sub.nodes().iter().any(|n| allowed(n)) {
         return vec![NO_PERMISSION.to_owned()];
     }
+    if let (Some(_), Sub::Root | Sub::Help(_)) = (sender, &sub) {
+        let query = if let Sub::Help(q) = &sub { q.as_str() } else { "" };
+        return help_lines_for(query, &|s| s.nodes().iter().any(|n| allowed(n)));
+    }
     with(|c| c.run(sender, &sub))
 }
 
@@ -939,6 +969,15 @@ pub fn command(sender: Option<u128>, args: &str, allowed: &dyn Fn(&str) -> bool)
 /// check; empty for a line that is no command.
 pub fn nodes(args: &str) -> &'static [&'static str] {
     parse(args).map(|s| s.nodes()).unwrap_or(&[])
+}
+
+/// The completions of `/sr help <query>`: the syntaxes of the commands the sender may run
+/// (`CommandHelpService.suggestHelpQueries`).
+pub fn help_suggestions(allowed: &dyn Fn(&str) -> bool) -> Vec<String> {
+    HELP.iter()
+        .filter(|(syntax, _)| help_sub(syntax).nodes().iter().any(|n| allowed(n)))
+        .map(|(syntax, _)| syntax.trim_start_matches("/sr ").to_owned())
+        .collect()
 }
 
 pub fn admin_level() -> u8 {

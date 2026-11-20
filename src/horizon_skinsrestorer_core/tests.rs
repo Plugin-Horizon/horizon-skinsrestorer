@@ -407,3 +407,12 @@ fn leaving_closes_the_menu_state() {
     c.menu_clicked(P, 7, 10, 0, 0);
     assert!(c.tick(now).is_empty());
 }
+
+#[test]
+fn help_lists_only_what_the_sender_may_run() {
+    let only_status = |n: &str| n == "skinsrestorer.admincommand.status";
+    let lines = command(Some(1), "help", &|n| n == "skinsrestorer.admincommand" || only_status(n));
+    assert!(lines.iter().any(|l| l.contains("/sr status")));
+    assert!(!lines.iter().any(|l| l.contains("/sr dump")));
+    assert_eq!(help_suggestions(&only_status), vec!["status".to_owned()]);
+}

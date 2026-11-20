@@ -74,10 +74,12 @@ horizon-launcher native-build <path to this folder> --server-output <dir> --vers
 
 What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: ...)` in `src/lib.rs`):
 
-- Resetting to the default skin is skipped (a profile property cannot be cleared).
-- `/skull` cannot give a textured head, and skin menu heads are plain heads (no profile component).
-- A joining player is registered with the core on login (so acks, the menu and skulls work), but a stored skin the join lookup finds cannot be written into the profile (no profile setter).
+- No skin is applied unless the mod is built with the cargo feature `horizon_profile_api` (off by default): it needs
+  `player_set_profile_property` and `player_refresh`, which Horizon main does not have yet (they are on the
+  `gap-profiles` branch). With it, a reset to the default skin writes an empty `textures` value.
+- A joining player is registered with the core on login (so acks, the menu and skulls work), but a stored skin the join lookup finds cannot be written into the profile without that feature.
 - Mount keeping across a skin refresh is missing.
+- Messages are fixed English text (no `locales/*.json`), `/sr help` is a plain list (cloud's paginated help is not reproduced), `messages.*`, `login.*` and `commands.*` config keys are not read.
 - The apply path needs a SQL back end or proxy payloads; it was not run against either.
 
 ## Licence

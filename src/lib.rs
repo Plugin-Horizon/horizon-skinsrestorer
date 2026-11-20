@@ -28,7 +28,7 @@ use mod_api::{
     PermissionNode, PermissionValueType, PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
     RegisterCommandsEvent, Registrar, RegistrationContext, ResourcePackStatusEvent,
     RunModCommandEvent, ServerAboutToStartEvent, ServerHost, ServerTickEvent, ServerTickPhase,
-    SoundSource, Text,
+    SoundSource, Suggestion, TabCompleteEvent, Text,
 };
 
 /// The proxy's channel (`sr:messagechannel`): skin updates in, the ack out.
@@ -145,14 +145,31 @@ fn set_profile_textures(host: &mut dyn ServerHost, player: u128, property: Optio
     let Some(p) = host.player(player) else {
         return false;
     };
-    let _ = (p, property);
-    false
+    // Needs `player_set_profile_property` (arismoko/horizon branch gap-profiles, not on main yet).
+    #[cfg(feature = "horizon_profile_api")]
+    {
+        return match property {
+            Some(prop) => p.set_profile_property(host, "textures", &prop.value, prop.signature.as_deref()),
+            // A reset to the default skin has no clear call: an empty value shows the default skin.
+            None => p.set_profile_property(host, "textures", "", None),
+        };
+    }
+    #[cfg(not(feature = "horizon_profile_api"))]
+    {
+        let _ = (p, property);
+        false
+    }
 }
 
 /// Shows the player's changed skin to everyone who sees them (`player_refresh`: hidden and shown again
 /// over two ticks). Their own view keeps the old skin until they change level or join again.
 // HMOD-GAP(player-refresh): main has no per-player tracker refresh; the new skin is not shown to others.
 fn refresh_player(host: &mut dyn ServerHost, player: u128) {
+    #[cfg(feature = "horizon_profile_api")]
+    if let Some(p) = host.player(player) {
+        let _ = p.refresh(host);
+    }
+    #[cfg(not(feature = "horizon_profile_api"))]
     let _ = (host, player);
 }
 
@@ -191,16 +208,80 @@ fn play_sound(host: &mut dyn ServerHost, player: u128, sound: &Sound) {
     let _ = p.play_sound(host, &sound.id, source, sound.volume, sound.pitch);
 }
 
-/// One menu entry: the engine item with its name and lore (`ItemStack::set_display`).
-// TODO(arismoko-api: stack_components): the head's texture (`minecraft:profile`) and the glint are not
-// set, so every head is a plain head and the entry does not glint.
-// HMOD-GAP(item-display): main has no ItemStack setter for a custom name or lore; entries keep the bare item.
+/// A JSON value as SNBT, the form an item's text components take in NBT: objects as compounds, strings quoted,
+/// booleans as bytes, and the entries of an array all compounds (a bare string becomes `{text: ...}`).
+fn json_to_snbt(value: &serde_json::Value) -> String {
+    use serde_json::Value;
+    fn quote(s: &str) -> String {
+        format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+    match value {
+        Value::Null => "\"\"".into(),
+        Value::Bool(b) => if *b { "1b" } else { "0b" }.into(),
+        Value::Number(n) => match n.as_i64() {
+            Some(i) => i.to_string(),
+            None => format!("{}d", n.as_f64().unwrap_or(0.0)),
+        },
+        Value::String(s) => quote(s),
+        Value::Array(items) => {
+            let parts: Vec<String> = items
+                .iter()
+                .map(|item| match item {
+                    Value::Object(_) => json_to_snbt(item),
+                    other => format!("{{\"text\":{}}}", json_to_snbt(&Value::String(match other {
+                        Value::String(s) => s.clone(),
+                        o => o.to_string(),
+                    }))),
+                })
+                .collect();
+            format!("[{}]", parts.join(","))
+        }
+        Value::Object(map) => {
+            let parts: Vec<String> = map.iter().map(|(k, v)| format!("{}:{}", quote(k), json_to_snbt(v))).collect();
+            format!("{{{}}}", parts.join(","))
+        }
+    }
+}
+
+/// A text of the core (JSON text) as the SNBT of a component; a string that is no JSON is literal text.
+fn text_snbt(json: &str) -> String {
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(v @ serde_json::Value::Object(_)) => json_to_snbt(&v),
+        Ok(serde_json::Value::Array(items)) => json_to_snbt(&serde_json::Value::Array(items)),
+        _ => json_to_snbt(&serde_json::json!({ "text": json })),
+    }
+}
+
+/// The SNBT of an item with a name, lore, the head's texture and the glint of a menu entry.
+fn item_snbt(item: &MenuItem) -> String {
+    let mut components: Vec<String> = Vec::new();
+    if !item.name.is_empty() {
+        components.push(format!("\"minecraft:custom_name\":{}", text_snbt(&item.name)));
+    }
+    if !item.lore.is_empty() {
+        let lines: Vec<String> = item.lore.iter().map(|l| text_snbt(l)).collect();
+        components.push(format!("\"minecraft:lore\":[{}]", lines.join(",")));
+    }
+    if let Some(texture) = &item.texture_value {
+        components.push(format!(
+            "\"minecraft:profile\":{{\"properties\":[{{\"name\":\"textures\",\"value\":{}}}]}}",
+            json_to_snbt(&serde_json::Value::String(texture.clone()))
+        ));
+    }
+    if item.glint {
+        components.push("\"minecraft:enchantment_glint_override\":1b".into());
+    }
+    format!(
+        "{{\"id\":\"{}\",\"count\":1,\"components\":{{{}}}}}",
+        item.material,
+        components.join(",")
+    )
+}
+
+/// One menu entry: the engine item with its name, lore, head texture and glint (built from SNBT; the bare
+/// item when the engine refuses it).
 fn menu_item(host: &mut dyn ServerHost, item: &MenuItem) -> Option<ItemStack> {
-    let stack = item_stack(host, item.material)?;
-    let name = (!item.name.is_empty()).then(|| json_text(host, &item.name));
-    let lore: Vec<Text> = item.lore.iter().map(|line| json_text(host, line)).collect();
-    let _ = (name, lore);
-    Some(stack)
+    host.item_from_snbt(&item_snbt(item)).or_else(|| item_stack(host, item.material))
 }
 
 /// `/skins`: a chest menu of `rows` rows, its slots as the core gave them, and the window reported to
@@ -244,14 +325,17 @@ fn apply_actions(host: &mut dyn ServerHost, actions: Vec<Action>) {
                 slots,
             } => open_menu(host, player, rows, &title, &slots),
             Action::CloseMenu { player } => host.close_menu(player),
-            // TODO(arismoko-api: give_stack): /skull cannot give the head yet: `host.give` takes a bare item
-            // key, and the head needs its texture component. The player is told so.
-            Action::GiveSkull { player, .. } => {
-                if let Some(p) = host.player(player) {
-                    let _ = p.tell(
-                        host,
-                        Text::literal("/skull is not available on this server yet."),
-                    );
+            // `/skull`: the head with its texture and name, into the inventory (what does not fit is dropped).
+            Action::GiveSkull { player, display_name, texture_value } => {
+                let head = MenuItem {
+                    material: "minecraft:player_head",
+                    name: display_name,
+                    lore: Vec::new(),
+                    texture_value: Some(texture_value),
+                    glint: false,
+                };
+                if let (Some(p), Some(stack)) = (host.player(player), menu_item(host, &head)) {
+                    let _ = p.give_stack(host, stack);
                 }
             }
             // The proxy's ack, on the raw channel declared in `register`.
@@ -398,6 +482,32 @@ impl Hooks for Mod {
         Flow::Cancel
     }
 
+    /// `/sr help <query>`: the syntaxes of the commands the sender may run (`suggestHelpQueries`).
+    fn tab_complete(&self, host: &mut dyn ServerHost, event: &mut TabCompleteEvent<'_>) {
+        let line = event.command.trim_start_matches('/');
+        let mut words = line.split(' ');
+        let (Some(root), Some(sub)) = (words.next(), words.next()) else {
+            return;
+        };
+        if (root != "sr" && root != "skinsrestorer") || !sub.eq_ignore_ascii_case("help") {
+            return;
+        }
+        let mut granted: Vec<&str> = Vec::new();
+        if let Some(p) = host.player(event.player) {
+            for name in ADMIN_NODES {
+                if p.permission_bool(host, &admin_node(name)).unwrap_or(false) {
+                    granted.push(name);
+                }
+            }
+        }
+        let allowed = |node: &str| !node.starts_with("skinsrestorer.admin") || granted.iter().any(|g| *g == node);
+        let start = event.command.rfind(' ').map_or(0, |i| i + 1);
+        let end = event.command.len();
+        for name in core::help_suggestions(&allowed) {
+            event.suggestions.push(Suggestion::new((start, end), name));
+        }
+    }
+
     fn server_tick(&self, host: &mut dyn ServerHost, event: &mut ServerTickEvent<'_>) {
         if !matches!(
             event.phase,
@@ -453,5 +563,32 @@ impl Hooks for Mod {
     ) {
         // server.resourcePackFix: a pack that finished loading shows the skin again (through the core).
         core::resource_pack_status(event.player, event.status);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn texts_become_snbt_compounds() {
+        assert_eq!(text_snbt(r#"{"text":"A","color":"red","bold":true}"#), r#"{"bold":1b,"color":"red","text":"A"}"#);
+        assert_eq!(text_snbt("hi"), r#"{"text":"hi"}"#);
+        assert_eq!(text_snbt(r#"["a",{"text":"b"}]"#), r#"[{"text":"a"},{"text":"b"}]"#);
+    }
+
+    #[test]
+    fn a_menu_head_carries_its_texture_name_and_glint() {
+        let item = MenuItem {
+            material: "minecraft:player_head",
+            name: r#"{"text":"Skin"}"#.into(),
+            lore: vec!["line".into()],
+            texture_value: Some("abc".into()),
+            glint: true,
+        };
+        assert_eq!(
+            item_snbt(&item),
+            r#"{"id":"minecraft:player_head","count":1,"components":{"minecraft:custom_name":{"text":"Skin"},"minecraft:lore":[{"text":"line"}],"minecraft:profile":{"properties":[{"name":"textures","value":"abc"}]},"minecraft:enchantment_glint_override":1b}}"#
+        );
     }
 }

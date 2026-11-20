@@ -1,4 +1,5 @@
 # hmod port: skinsrestorer
+Parity: before 35% -> after 47% (33/70 items; method: backend commands, nodes, config keys, messages and behaviours of the proxy-mode backend; skin application behind a missing API counts as not done)
 Round 1
 - Fixed: src/lib.rs `ProxyInbox::handle`: returns `PayloadHandleError` (import added), context error wrapped in `PayloadHandleError::Failed`.
 - Fixed: src/lib.rs `set_profile_textures`: no `set_profile_property` on main, call replaced by a refusal (gap below).
@@ -24,3 +25,11 @@ Round 1
   - `run_mod_command` admin answers are precomputed for the four declared nodes; any other `skinsrestorer.admin*` name the core asks is denied (fail-closed).
 
 - Audit round: `player_logged_in` now calls `core::joining`, so the core knows the player: the proxy ack, `openGUI` and `giveSkull` messages and resource-pack status are handled. A skin found by the join lookup is not applied (HMOD-GAP(profile-write)). README/config comments corrected (`adminLevel` unused, level 2 default).
+
+Round 3 (100 % round)
+- Menu entries now carry name, lore, head texture (`minecraft:profile`) and glint, built from SNBT with `item_from_snbt` (JSON text to compounds); `/skull` gives the head with `give_stack`.
+- `/sr help` is filtered by the sender's permissions; `/sr help <TAB>` suggests the syntaxes of the commands the sender may run.
+- Sound constants whose vanilla id has an underscore (`BLOCK_NOTE_BLOCK_PLING`, `ITEM_ARMOR_EQUIP_IRON`) resolve (table of compound words); an invalid `server.sound.value` logs `Invalid sound value in config: <value>`.
+- Profile write and refresh are written behind the cargo feature `horizon_profile_api` (off): `PlayerRef::set_profile_property(host, name, value, signature) -> bool` and `PlayerRef::refresh(host) -> bool` of the `gap-profiles` branch (#17923). Not compiled by default.
+- Gaps: skin application on Horizon main, locale files, cloud's help layout, `messages.*`/`login.*`/`commands.*` keys, AdminInfoListener, extra permission nodes, PlaceholderAPI expansions.
+- Unsure (blind): the names `PlayerRef::give_stack`, `set_profile_property`, `refresh`; SNBT shape of `minecraft:profile`; `Suggestion::new((start, end), text)` as used by the invsee port.

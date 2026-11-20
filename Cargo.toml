@@ -20,6 +20,9 @@ ureq = { version = "2", default-features = false, features = ["tls"], optional =
 
 
 [features]
+# Writes the skin into the player's profile and refreshes them (needs `player_set_profile_property` and
+# `player_refresh`, not on Horizon main yet).
+horizon_profile_api = []
 default = ["mysql", "net"]
 mysql = ["dep:mysql"]
 # /sr status and /sr dump (HTTP).
