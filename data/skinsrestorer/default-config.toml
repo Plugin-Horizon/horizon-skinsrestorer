@@ -73,24 +73,30 @@ notUnlockedSkin = "c10591e6909e6a281b371836e462d67a2c78fa0952e910f32b41a26c48c17
 
 [gui.custom]
 enabled = true
+index = 0
 onlyShowList = false
-list = []
+list = ["xknat", "pistonmaster"]
 
 [gui.recommendations]
 enabled = true
+index = 2
 onlyShowList = false
-list = []
+list = ["vampire", "space-suit"]
 
 [gui.players]
 enabled = false
+index = 1
 onlyShowList = false
-list = []
+list = ["7dcfc130-344a-4719-9fbe-3176bc2075c6", "b1ae0778-4817-436c-96a3-a72c67cda060"]
 
 [commands]
 forceDefaultPermissions = true
 skinChangeCooldown = 30
+skullGetCooldown = 30
 skinErrorCooldown = 5
 skullErrorCooldown = 5
+maxHistoryLength = 36
+maxFavouriteLength = 180
 disableSkinCommand = false
 disableSkullCommand = false
 disableGUICommand = false
@@ -99,30 +105,44 @@ perSkinPermissionsConsent = ""
 
 [commands.disabledSkins]
 enabled = false
-list = []
+list = ["steve", "owner"]
 
 [commands.restrictSkinUrls]
 enabled = false
-list = []
+list = [
+  "https://i.imgur.com",
+  "http://i.imgur.com",
+  "https://storage.googleapis.com",
+  "http://storage.googleapis.com",
+  "https://cdn.discordapp.com",
+  "http://cdn.discordapp.com",
+  "https://textures.minecraft.net",
+  "http://textures.minecraft.net",
+]
 
 [commands.customHelp]
 enabled = false
-message = []
+message = [
+  "<yellow>Skin plugin Help",
+  "<gray>---------------------",
+  "<gray>/skin set <skin> - <yellow>Set your skin",
+]
 
 [storage]
 disallowAutoUpdateSkin = false
 skinExpiresAfter = 15
+uuidExpiresAfter = 60
 
 [storage.defaultSkins]
 enabled = false
 applyForPremium = false
-list = []
+list = ["xknat", "pistonmaster", "<random>"]
 
 [proxy.notAllowedCommandServers]
-enabled = false
+enabled = true
 allowList = false
 ifNoServerBlockCommand = true
-list = []
+list = ["auth"]
 
 [login]
 noSkinIfLoginCanceled = true

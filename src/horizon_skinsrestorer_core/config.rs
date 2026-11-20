@@ -72,6 +72,9 @@ pub struct Messages {
 pub struct Listed {
     pub enabled: bool,
     pub list: Vec<String>,
+    /// The `gui.*.index` of the original: the menu slot order of the GUI's tabs (0 when a list has none).
+    #[serde(default)]
+    pub index: i64,
     #[serde(default)]
     pub only_show_list: bool,
     #[serde(default)]
@@ -101,8 +104,11 @@ pub struct Gui {
 pub struct Commands {
     pub force_default_permissions: bool,
     pub skin_change_cooldown: i64,
+    pub skull_get_cooldown: i64,
     pub skin_error_cooldown: i64,
     pub skull_error_cooldown: i64,
+    pub max_history_length: i64,
+    pub max_favourite_length: i64,
     pub disable_skin_command: bool,
     pub disable_skull_command: bool,
     #[serde(rename = "disableGUICommand")]
@@ -125,6 +131,7 @@ pub struct CustomHelp {
 pub struct StorageConfig {
     pub disallow_auto_update_skin: bool,
     pub skin_expires_after: i64,
+    pub uuid_expires_after: i64,
     pub default_skins: Listed,
 }
 
@@ -527,6 +534,19 @@ database:
         assert_eq!(c.gui.not_unlocked_skin.len(), 64);
         assert_eq!(c.storage.skin_expires_after, 15);
         assert_eq!(c.api.mojang_batch_window_seconds, 1);
+        assert!(c.proxy.not_allowed_command_servers.enabled);
+        assert_eq!(c.proxy.not_allowed_command_servers.list, vec!["auth".to_owned()]);
+        assert_eq!(c.commands.skull_get_cooldown, 30);
+        assert_eq!(c.commands.max_history_length, 36);
+        assert_eq!(c.commands.max_favourite_length, 180);
+        assert_eq!(c.storage.uuid_expires_after, 60);
+        assert_eq!(c.gui.custom.index, 0);
+        assert_eq!(c.gui.players.index, 1);
+        assert_eq!(c.gui.recommendations.index, 2);
+        assert_eq!(c.gui.custom.list, vec!["xknat".to_owned(), "pistonmaster".to_owned()]);
+        assert_eq!(c.commands.disabled_skins.list, vec!["steve".to_owned(), "owner".to_owned()]);
+        assert_eq!(c.commands.restrict_skin_urls.list.len(), 8);
+        assert_eq!(c.commands.custom_help.message.len(), 3);
     }
 
     #[test]
