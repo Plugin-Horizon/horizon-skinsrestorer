@@ -6,8 +6,8 @@
 //!   `config/skinsrestorer.toml` (the core writes the defaults there on first start). Its defaults use
 //!   `database.type = FILE`, so no MariaDB is opened.
 //! - `/sr` and `/skinsrestorer` (`help`, `status`, `dump`): `register_commands` + `run_mod_command`, for
-//!   players and the console. Admin nodes are typed nodes (`permission_gather_nodes`), queried with
-//!   `permission_bool`, default operator level 2.
+//!   players and the console. The nodes of the original's permission registry are declared at gathering
+//!   (`DECLARED_NODES`, with Bukkit's defaults); `/sr` checks its admin nodes (`ADMIN_NODES`) with `permission_bool`.
 //! - The skins menu: `menu_clicked`, `menu_closed` and `host.open_menu` / `host.close_menu`. Items have
 //!   no names or lore (HMOD-GAP(item-display)); head textures and the glint are still missing.
 //! - Skin changes: `server_tick` drains the core's actions. Writing the profile textures and refreshing
@@ -42,6 +42,50 @@ const ADMIN_NODES: [&str; 4] = [
     "skinsrestorer.admin",
     "skinsrestorer.admincommand.status",
     "skinsrestorer.admincommand.dump",
+];
+
+/// Every node of the original's `PermissionRegistry` plus its two groups (`skinsrestorer.player` and `skinsrestorer.admin`),
+/// with the default Bukkit gives them: the children of the player group are true for everyone (level 0), all others
+/// are operator-only (level 2). The groups' wildcards (`skinsrestorer.command.*`, `skinsrestorer.admincommand.*`) cannot be
+/// node names here; a permission plugin that grants a wildcard still needs to grant the nodes below.
+const DECLARED_NODES: &[(&str, u8)] = &[
+    ("skinsrestorer.player", 0),
+    ("skinsrestorer.admin", 2),
+    ("skinsrestorer.command", 0),
+    ("skinsrestorer.command.skull", 2),
+    ("skinsrestorer.command.gui", 0),
+    ("skinsrestorer.command.set", 0),
+    ("skinsrestorer.command.set.other", 2),
+    ("skinsrestorer.command.set.url", 0),
+    ("skinsrestorer.command.clear", 0),
+    ("skinsrestorer.command.clear.other", 2),
+    ("skinsrestorer.command.random", 0),
+    ("skinsrestorer.command.random.other", 2),
+    ("skinsrestorer.command.search", 0),
+    ("skinsrestorer.command.edit", 0),
+    ("skinsrestorer.command.update", 0),
+    ("skinsrestorer.command.update.other", 2),
+    ("skinsrestorer.command.undo", 0),
+    ("skinsrestorer.command.undo.other", 2),
+    ("skinsrestorer.command.favourite", 0),
+    ("skinsrestorer.command.favourite.other", 2),
+    ("skinsrestorer.admincommand", 2),
+    ("skinsrestorer.admincommand.skull.get", 2),
+    ("skinsrestorer.admincommand.skull.get.other", 2),
+    ("skinsrestorer.admincommand.skull.get.url", 2),
+    ("skinsrestorer.admincommand.skull.random", 2),
+    ("skinsrestorer.admincommand.skull.random.other", 2),
+    ("skinsrestorer.admincommand.reload", 2),
+    ("skinsrestorer.admincommand.status", 2),
+    ("skinsrestorer.admincommand.drop", 2),
+    ("skinsrestorer.admincommand.info", 2),
+    ("skinsrestorer.admincommand.applyskin", 2),
+    ("skinsrestorer.admincommand.createcustom", 2),
+    ("skinsrestorer.admincommand.purgeolddata", 2),
+    ("skinsrestorer.admincommand.dump", 2),
+    ("skinsrestorer.bypasscooldown", 2),
+    ("skinsrestorer.bypassdisabled", 2),
+    ("skinsrestorer.ownskin", 2),
 ];
 
 /// The typed node for one admin node name.
@@ -385,12 +429,12 @@ impl Hooks for Mod {
             .play_raw(PayloadId(PROXY_CHANNEL.into()), Some(std::sync::Arc::new(ProxyInbox)));
     }
 
-    /// Declares the admin nodes of `/sr`, each defaulting to operator level 2.
+    /// Declares the nodes of the original's permission registry, each with its Bukkit default (`DECLARED_NODES`).
     fn permission_gather_nodes(&self, event: &mut PermissionGatherNodesEvent<'_>) {
-        for name in ADMIN_NODES {
+        for &(name, level) in DECLARED_NODES {
             let _ = event.nodes.add(
                 admin_node(name),
-                NodeDefault::Level(PermissionLevel::from_level(2)),
+                NodeDefault::Level(PermissionLevel::from_level(i32::from(level))),
             );
         }
     }
