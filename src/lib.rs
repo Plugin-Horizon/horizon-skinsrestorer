@@ -189,7 +189,8 @@ fn set_profile_textures(host: &mut dyn ServerHost, player: u128, property: Optio
     let Some(p) = host.player(player) else {
         return false;
     };
-    // Needs `player_set_profile_property` (arismoko/horizon branch gap-profiles, not on main yet).
+    // Needs `PlayerRef::set_profile_property` (host `player_set_profile_property`: arismoko/horizon #17923,
+    // merged upstream, not in the pinned SDK yet).
     #[cfg(feature = "horizon_profile_api")]
     {
         return match property {
@@ -567,8 +568,8 @@ impl Hooks for Mod {
 
     fn player_logged_in(&self, host: &mut dyn ServerHost, event: &mut PlayerLoggedInEvent<'_>) {
         // The core only answers messages (ack, menu, skull) of a player it knows. The forwarded textures
-        // come from the profile; a replacement the join lookup might return cannot be written yet
-        // (HMOD-GAP(profile-write)), so it is dropped.
+        // come from the profile. A replacement the join lookup returns is written below only with the
+        // feature `horizon_profile_api` (HMOD-GAP(profile-write) until the pinned SDK has upstream #17923).
         let forwarded = host
             .player(event.player)
             .and_then(|p| p.profile(&*host))
@@ -579,7 +580,13 @@ impl Hooks for Mod {
                     .find(|prop| prop.name == "textures")
             })
             .map(|prop| Property::new(prop.value, prop.signature));
-        let _ = core::joining(event.player, event.name, forwarded);
+        let replacement = core::joining(event.player, event.name, forwarded);
+        #[cfg(feature = "horizon_profile_api")]
+        if let Some(property) = replacement {
+            set_profile_textures(host, event.player, property.as_ref());
+        }
+        #[cfg(not(feature = "horizon_profile_api"))]
+        let _ = replacement;
     }
 
     fn player_logged_out(&self, _: &mut dyn ServerHost, event: &mut PlayerLoggedOutEvent<'_>) {

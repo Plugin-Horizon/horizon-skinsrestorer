@@ -1,5 +1,24 @@
 # hmod port: skinsrestorer
-Parity: before 47% -> after 51% (36/70 items; method: backend commands, nodes, config keys, messages and behaviours of the proxy-mode backend; skin application behind a missing API counts as not done; AdminInfoListener counted as closed because it has no reachable message on this backend)
+Parity: 51% now / 68% with our PRs (36/70 items; method: backend commands, nodes, config keys, messages and behaviours of the proxy-mode backend; skin application behind a missing API counts as not done; AdminInfoListener counted as closed because it has no reachable message on this backend). Round 100 changed no item count: profile write and refresh (#17923) are merged upstream but not in the pinned SDK, so they stay behind `horizon_profile_api`.
+
+Round 100 (blind, not compiled)
+- Checked #17923 on arismoko/horizon upstream/main: host methods `player_set_profile_property(player, name, value, signature) -> bool` and `player_refresh(player) -> bool` (the mod's `PlayerRef::set_profile_property` / `PlayerRef::refresh` match the generated wrapper naming). Not in the pinned SDK (`.horizon/sdk/api` = perm-sdk HEAD, and the pin in horizon-mod.toml) so the feature stays off. `profile_by_uuid` / `profile_by_name` came with it; no backend path here needs them (the join uses the login profile). #17923 has no `player_remove_profile_property` and no remount, so those gaps stay.
+- Changed (behind `horizon_profile_api`): `player_logged_in` now writes the stored skin that `core::joining` returns into the profile, before the player is sent to others. Without the feature the replacement is still dropped, as before.
+- Doc comments and README/Cargo.toml/GAPS_UPSTREAM notes: #17923 is merged upstream, not in the pin.
+- Checklist (backend, proxy mode):
+  - [x] `/sr`, `/sr help [query]`, `/sr status`, `/sr dump` registered (`SRPlugin.initProxyCommands` registers only `SRProxyCommand`; skin, skull and GUI commands are not on backends, matching the port)
+  - [x] status texts and order vs `SRCommandService.executeStatus` and `locale.json` (`admincommand_status_*`, `dump_*`); the prefix is on the same messages as in `Message.java`, the divider is not
+  - [x] verdict rule (`minOneServiceUnavailable` = a type with 0 successes) and the firewall line
+  - [x] permission nodes: the 35 `PermissionRegistry` nodes and the two groups are all declared (wildcards cannot be node names)
+  - [x] proxy message channel: skin update V2/V3, ack, GUI, give skull, unknown (`SRProxyMessageAdapter`, `SRServerMessageAdapter`)
+  - [ ] commit short hash in `/sr status` (`BuildData.COMMIT_SHORT`): port prints the fixed text `horizon-port`
+  - [ ] locales (`plugins/SkinsRestorer/locales/*.json`), `messages.disablePrefix`, `perIssuerLocale` (no locale API, `player_locale` not in #17923)
+  - [ ] cloud's paginated `/sr help` layout
+  - [ ] `messages.*`, `login.*`, `commands.*` keys used on a backend (the proxy does the logins and commands)
+  - [ ] remount after a skin refresh (no entity remount API in #17923)
+  - [ ] reset to the default skin: needs `player_remove_profile_property` (not in #17923); the feature writes an empty value
+  - [ ] AdminInfoListener notices (update checker, Java 17 notice: not applicable on Horizon)
+- Not run: no cargo, no tests. Feature build (`--features horizon_profile_api`) still needs a compile round against a pin that has #17923.
 Round 1
 - Fixed: src/lib.rs `ProxyInbox::handle`: returns `PayloadHandleError` (import added), context error wrapped in `PayloadHandleError::Failed`.
 - Fixed: src/lib.rs `set_profile_textures`: no `set_profile_property` on main, call replaced by a refusal (gap below).
