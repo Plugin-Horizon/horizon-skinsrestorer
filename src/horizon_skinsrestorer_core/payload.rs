@@ -13,7 +13,7 @@
 //! | `giveSkull` | display name (JSON string), texture hash |
 //!
 //! The backend answers an ack with a `SRProxyPluginMessage`: `ack`, id (UUID), version.
-use crate::property::Property;
+use crate::horizon_skinsrestorer_core::property::Property;
 
 /// The channel (`SRHelpers.MESSAGE_CHANNEL`).
 pub const CHANNEL: &str = "sr:messagechannel";
@@ -205,7 +205,7 @@ pub fn encode_ack(ack: &Ack) -> Option<Vec<u8>> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::property::tests::sample;
+    use crate::horizon_skinsrestorer_core::property::tests::sample;
 
     fn utf(s: &str) -> Vec<u8> {
         encode_modified_utf8(s).unwrap()

@@ -1,7 +1,7 @@
 //! [`Sql`] on MariaDB/MySQL (the `mysql` crate, blocking). The pool connects on first use, so a
 //! database that is down at start costs nothing until a skin is needed.
-use crate::config::Database;
-use crate::storage::{Row, Sql};
+use crate::horizon_skinsrestorer_core::config::Database;
+use crate::horizon_skinsrestorer_core::storage::{Row, Sql};
 use mysql::prelude::Queryable;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};

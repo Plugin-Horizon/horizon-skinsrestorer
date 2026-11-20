@@ -1,5 +1,9 @@
 # horizon-skinsrestorer
 
+## Port status
+
+Compared with SkinsRestorer 15.x (proxy-mode backend) (estimate): **51 %** of the original's commands, permissions, config keys, messages and features work today; **51 %** once our open Horizon PRs are merged; **53 %** with the engine changes we are writing; **69 %** with the newest Horizon SDK. Estimated count: 36/70 items. Status: not yet compiled after the 2026-11-20 round.
+
 > **Unofficial Rust port of SkinsRestorer for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the SkinsRestorer authors.**
 
 The backend side of [SkinsRestorer](https://skinsrestorer.net) for [Horizon](https://github.com/arismoko/horizon),
@@ -39,8 +43,9 @@ This is a native trait mod: `horizon-mod.toml`, a `Cargo.toml` that depends on `
   `/sr dump` (uploads the support report to bytebin.lucko.me and prints the link). Permission nodes:
   `skinsrestorer.admincommand` (root, help), `skinsrestorer.admincommand.status`,
   `skinsrestorer.admincommand.dump`; `skinsrestorer.admin` and `skinsrestorer.admincommand.*` also allow
-  everything but `dump`, as in the original. Without a permissions provider the operator level
-  `horizon.adminLevel` stands in (Bukkit's default for these nodes is "op"). The console may do all.
+  everything but `dump`, as in the original. Without a permissions provider operator level 2
+  stands in (Bukkit's default for these nodes is "op"); `horizon.adminLevel` is not read. The console may do all.
+  The other nodes of the original's permission registry are declared with Bukkit's defaults too (`DECLARED_NODES`).
   The skin commands (`/skin`, `/skull`, `/skins`) stay on the proxy.
 
 ## Config
@@ -74,10 +79,12 @@ horizon-launcher native-build <path to this folder> --server-output <dir> --vers
 
 What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: ...)` in `src/lib.rs`):
 
-- Resetting to the default skin is skipped (a profile property cannot be cleared).
-- `/skull` cannot give a textured head, and skin menu heads are plain heads (no profile component).
-- A joining player keeps the skin the proxy forwarded; the join lookup is not hooked.
+- No skin is applied unless the mod is built with the cargo feature `horizon_profile_api` (off by default): it needs
+  `player_set_profile_property` and `player_refresh` from arismoko/horizon #17923. That PR is merged upstream but the
+  pinned SDK predates it, so bump the pin before enabling the feature. With it, a reset to the default skin writes an empty `textures` value.
+- A joining player is registered with the core on login (so acks, the menu and skulls work). A stored skin the join lookup finds is written into the profile only with that feature.
 - Mount keeping across a skin refresh is missing.
+- Messages are fixed English text (no `locales/*.json`), `/sr help` is a plain list (cloud's paginated help is not reproduced). The `messages.*`, `login.*` and `commands.*` keys are read with the original's defaults but not used on the backend (the proxy does the logins and the commands).
 - The apply path needs a SQL back end or proxy payloads; it was not run against either.
 
 ## Licence

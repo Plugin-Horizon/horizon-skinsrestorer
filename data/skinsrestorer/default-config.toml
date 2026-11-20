@@ -23,7 +23,7 @@ tablePrefix = "sr_"
 connectionOptions = "sslMode=trust&serverTimezone=UTC"
 
 [server]
-# Accepted for config compatibility; not used (see GAPS.md).
+# Re-shows the skin after a resource pack finished loading (needs a profile setter to take effect).
 resourcePackFix = true
 dismountPlayerOnSkinUpdate = true
 # Needs dismountPlayerOnSkinUpdate: with that off, remount is off too.
@@ -55,6 +55,9 @@ playerHeadChatObjects = false
 [api]
 # Adds Ely.by to the /sr status checks.
 elyByEnabled = false
+# Read and unused: the port makes no MineSkin upload (the API key is never kept).
+mineskinSecretSkins = false
+mojangBatchWindowSeconds = 1
 # true: plugins/SkinsRestorer/recommendations.json is read (the recommended skins).
 fetchRecommendedSkins = true
 
@@ -64,37 +67,94 @@ debug = false
 
 # The lists below are the original's config.yml lists. The backend reads them only so that the file is
 # read in full: the proxy shows the menus, runs the commands and makes the default skins.
+[gui]
+# Texture hash of the skin for a player who has not unlocked one (the original's default).
+notUnlockedSkin = "c10591e6909e6a281b371836e462d67a2c78fa0952e910f32b41a26c48c1757c"
+
 [gui.custom]
 enabled = true
-list = []
+index = 0
+onlyShowList = false
+list = ["xknat", "pistonmaster"]
 
 [gui.recommendations]
 enabled = true
-list = []
+index = 2
+onlyShowList = false
+list = ["vampire", "space-suit"]
 
 [gui.players]
 enabled = false
-list = []
+index = 1
+onlyShowList = false
+list = ["7dcfc130-344a-4719-9fbe-3176bc2075c6", "b1ae0778-4817-436c-96a3-a72c67cda060"]
+
+[commands]
+forceDefaultPermissions = true
+skinChangeCooldown = 30
+skullGetCooldown = 30
+skinErrorCooldown = 5
+skullErrorCooldown = 5
+maxHistoryLength = 36
+maxFavouriteLength = 180
+disableSkinCommand = false
+disableSkullCommand = false
+disableGUICommand = false
+perSkinPermissions = false
+perSkinPermissionsConsent = ""
 
 [commands.disabledSkins]
 enabled = false
-list = []
+list = ["steve", "owner"]
 
 [commands.restrictSkinUrls]
 enabled = false
-list = []
+list = [
+  "https://i.imgur.com",
+  "http://i.imgur.com",
+  "https://storage.googleapis.com",
+  "http://storage.googleapis.com",
+  "https://cdn.discordapp.com",
+  "http://cdn.discordapp.com",
+  "https://textures.minecraft.net",
+  "http://textures.minecraft.net",
+]
 
 [commands.customHelp]
 enabled = false
-message = []
+message = [
+  "<yellow>Skin plugin Help",
+  "<gray>---------------------",
+  "<gray>/skin set <skin> - <yellow>Set your skin",
+]
+
+[storage]
+disallowAutoUpdateSkin = false
+skinExpiresAfter = 15
+uuidExpiresAfter = 60
 
 [storage.defaultSkins]
 enabled = false
-list = []
+applyForPremium = false
+list = ["xknat", "pistonmaster", "<random>"]
 
 [proxy.notAllowedCommandServers]
-enabled = false
-list = []
+enabled = true
+allowList = false
+ifNoServerBlockCommand = true
+list = ["auth"]
+
+[login]
+noSkinIfLoginCanceled = true
+alwaysApplyPremium = false
+
+[login.offlineModeWarning]
+enabled = true
+
+[messages]
+disablePrefix = false
+perIssuerLocale = true
+dateFormat = "dd MMMM yyyy"
 
 [horizon]
 # When a join's skin is looked up in the database (only with database.type MYSQL). The original's
@@ -110,7 +170,7 @@ joinTimeoutMs = 1500
 # Every n seconds the online players' selections are read again (database.type MYSQL). The
 # original has nothing like it (the proxy tells the backend), so 0 (off) is the default.
 pollSeconds = 0
-# Operator level that stands in for the permission nodes when no permissions provider answers.
+# Not read: the admin nodes default to operator level 2 (declared at permission gathering).
 adminLevel = 3
 
 # The SQL the port runs. These are the original's tables and columns (its MySQL adapter, 15.x):

@@ -1,7 +1,7 @@
 //! The network calls of `/sr status` and `/sr dump`: the original's `ServiceCheckerService` and
 //! `DumpService`. Blocking (ureq): they run on their own thread, never on the tick.
-use crate::config::Config;
-use crate::property::{parse_uuid, uuid_dashed, uuid_plain};
+use crate::horizon_skinsrestorer_core::config::Config;
+use crate::horizon_skinsrestorer_core::property::{parse_uuid, uuid_dashed, uuid_plain};
 use std::time::Duration;
 
 const UUID_ECLIPSE: &str = "https://eclipse.skinsrestorer.net/mojang/uuid/";
@@ -99,7 +99,7 @@ fn bulk_id(r: &Response, name: &str) -> Option<u128> {
 }
 
 fn short(value: &str) -> String {
-    crate::property::Property::new(value, None).short_hash()
+    crate::horizon_skinsrestorer_core::property::Property::new(value, None).short_hash()
 }
 
 fn ok_uuid(service: &str, name: &str, uuid: &str) -> Check {

@@ -1,11 +1,11 @@
 //! The shared SQL storage the proxy writes: a player's selection (an identifier and its type)
 //! and the skin records it names, in the original's tables (`MySQLAdapter`: `players`,
 //! `player_skins`, `url_skins` keyed by url and variant, `url_index`, `custom_skins`,
-//! `legacy_skins`). The queries come from the config ([`crate::config::Schema`]) so a changed
+//! `legacy_skins`). The queries come from the config ([`crate::horizon_skinsrestorer_core::config::Schema`]) so a changed
 //! layout needs no rebuild; the defaults are the original's.
-use crate::config::Schema;
-use crate::property::{uuid_dashed, uuid_plain, Property};
-use crate::skins::{self, Recommendations, RECOMMENDATION_PREFIX};
+use crate::horizon_skinsrestorer_core::config::Schema;
+use crate::horizon_skinsrestorer_core::property::{uuid_dashed, uuid_plain, Property};
+use crate::horizon_skinsrestorer_core::skins::{self, Recommendations, RECOMMENDATION_PREFIX};
 
 /// What kind of record a selection names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,7 +213,7 @@ impl Storage {
         // An account skin's identifier is a UUID; it is written the table's way. A custom skin's
         // name is lower case (`CustomSkinData.sanitizeCustomSkinName`).
         let identifier = match sel.kind {
-            SkinType::Player => crate::property::parse_uuid(&sel.identifier)
+            SkinType::Player => crate::horizon_skinsrestorer_core::property::parse_uuid(&sel.identifier)
                 .map(|u| self.statements.uuid(u))
                 .unwrap_or_else(|| sel.identifier.clone()),
             SkinType::Custom => sel.identifier.to_lowercase(),
@@ -266,7 +266,7 @@ impl Storage {
     /// The account skin the proxy cached for `player` (what /skin clear goes back to).
     pub fn own_skin(&self, player: u128) -> Result<Option<Property>, String> {
         self.skin(&Selection {
-            identifier: crate::property::uuid_dashed(player),
+            identifier: crate::horizon_skinsrestorer_core::property::uuid_dashed(player),
             kind: SkinType::Player,
             variant: None,
         })
@@ -329,8 +329,8 @@ impl<T: Sql + ?Sized> Sql for std::sync::Arc<T> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
-    use crate::config::Config;
-    use crate::property::tests::sample;
+    use crate::horizon_skinsrestorer_core::config::Config;
+    use crate::horizon_skinsrestorer_core::property::tests::sample;
     use std::sync::Arc;
 
     pub const SEL: &str = "SELECT skin_identifier, skin_type, skin_variant FROM sr_players WHERE uuid = ?";
@@ -432,7 +432,7 @@ pub(crate) mod tests {
     #[test]
     fn a_recommendation_is_read_from_the_cache_not_the_table() {
         let (mut st, mem) = storage();
-        st.recommendations = crate::skins::Recommendations::parse(
+        st.recommendations = crate::horizon_skinsrestorer_core::skins::Recommendations::parse(
             r#"{"version":1,"skins":[{"skinId":"7f","skinName":"Knight","value":"dmFsdWU=","signature":"c2ln"}]}"#,
         )
         .unwrap();
@@ -458,7 +458,7 @@ pub(crate) mod tests {
     fn a_custom_selection_with_no_row_shows_the_bundled_skin_of_that_name() {
         let (st, mem) = storage();
         mem.put(SEL, &[&uuid_dashed(13)], vec![Some("Steve".into()), Some("CUSTOM".into()), None]);
-        let steve = crate::skins::hardcoded("steve").unwrap();
+        let steve = crate::horizon_skinsrestorer_core::skins::hardcoded("steve").unwrap();
         assert!(matches!(st.skin_of(13).unwrap(), Lookup::Skin(_, p) if p == steve));
         mem.put(SEL, &[&uuid_dashed(14)], vec![Some("nobody".into()), Some("CUSTOM".into()), None]);
         assert!(matches!(st.skin_of(14).unwrap(), Lookup::Dangling(_)));
