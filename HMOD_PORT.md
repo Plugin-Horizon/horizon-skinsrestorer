@@ -1,5 +1,5 @@
 # hmod port: skinsrestorer
-Parity: before 35% -> after 47% (33/70 items; method: backend commands, nodes, config keys, messages and behaviours of the proxy-mode backend; skin application behind a missing API counts as not done)
+Parity: before 47% -> after 51% (36/70 items; method: backend commands, nodes, config keys, messages and behaviours of the proxy-mode backend; skin application behind a missing API counts as not done; AdminInfoListener counted as closed because it has no reachable message on this backend)
 Round 1
 - Fixed: src/lib.rs `ProxyInbox::handle`: returns `PayloadHandleError` (import added), context error wrapped in `PayloadHandleError::Failed`.
 - Fixed: src/lib.rs `set_profile_textures`: no `set_profile_property` on main, call replaced by a refusal (gap below).
@@ -33,3 +33,10 @@ Round 3 (100 % round)
 - Profile write and refresh are written behind the cargo feature `horizon_profile_api` (off): `PlayerRef::set_profile_property(host, name, value, signature) -> bool` and `PlayerRef::refresh(host) -> bool` of the `gap-profiles` branch (#17923). Not compiled by default.
 - Gaps: skin application on Horizon main, locale files, cloud's help layout, `messages.*`/`login.*`/`commands.*` keys, AdminInfoListener, extra permission nodes, PlaceholderAPI expansions.
 - Unsure (blind): the names `PlayerRef::give_stack`, `set_profile_property`, `refresh`; SNBT shape of `minecraft:profile`; `Suggestion::new((start, end), text)` as used by the invsee port.
+
+Round 4 (blind, permission nodes, config keys, AdminInfoListener)
+- Added: the nodes of the original's `PermissionRegistry` and its two groups are declared at gathering (`DECLARED_NODES` in src/lib.rs, 37 nodes) with Bukkit's defaults: the children of `skinsrestorer.player` true for everyone (level 0), all others operator (level 2). The wildcards (`skinsrestorer.command.*`, `skinsrestorer.admincommand.*`) stay out: a node name cannot contain `*` and Horizon has no node groups. The `/sr` checks still use `ADMIN_NODES`.
+- Added: config keys the original has and the port did not read, with the original's defaults in data/skinsrestorer/default-config.toml and the core's `Config`: `login.*` (3), `messages.*` (3), `commands.forceDefaultPermissions`, `skinChangeCooldown`, `skinErrorCooldown`, `skullErrorCooldown`, `disableSkinCommand`, `disableSkullCommand`, `disableGUICommand`, `perSkinPermissions`, `perSkinPermissionsConsent`, `gui.notUnlockedSkin`, `gui.*.onlyShowList`, `storage.disallowAutoUpdateSkin`, `storage.skinExpiresAfter`, `storage.defaultSkins.applyForPremium`, `proxy.notAllowedCommandServers.allowList` and `ifNoServerBlockCommand`, `api.mineskinSecretSkins`, `api.mojangBatchWindowSeconds`. Read, not used on the backend: the proxy shows the menus, runs the commands and does the logins. `api.mineskinAPIKey` is still not kept (a secret; the Debug output must not show it).
+- AdminInfoListener: not ported, counted as closed. In the original the adapter sends the outdated-version notice (needs the update checker, not ported), the Java-17 notice (no Java on Horizon) and the offline-mode launcher warning, which returns at once in proxy mode. On this backend nothing is sent.
+- Not done: locale files (`plugins/SkinsRestorer/locales/*.json`), cloud's help layout, `messages.disablePrefix` and `perIssuerLocale` (no locale system yet).
+- Tests (blind, not run): the new defaults and the camelCase keys (`disableGUICommand`, `ifNoServerBlockCommand`) in src/horizon_skinsrestorer_core/config.rs.

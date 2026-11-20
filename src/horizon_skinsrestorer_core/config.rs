@@ -36,18 +36,61 @@ pub struct Config {
     pub commands: Commands,
     pub storage: StorageConfig,
     pub proxy: Proxy,
+    pub login: Login,
+    pub messages: Messages,
+}
+
+/// `login.*` of the original. The proxy does the login work, so the backend reads these only to read the whole file.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Login {
+    pub no_skin_if_login_canceled: bool,
+    pub always_apply_premium: bool,
+    pub offline_mode_warning: OfflineModeWarning,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct OfflineModeWarning {
+    pub enabled: bool,
+}
+
+/// `messages.*` of the original. The port's own messages are English and fixed (no locale files yet).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Messages {
+    pub disable_prefix: bool,
+    pub per_issuer_locale: bool,
+    pub date_format: String,
 }
 
 /// A list the original reads from `config.yml`. The backend has no use for most of them (the
 /// proxy shows the menus and runs the commands); they are read so that the whole file is read.
+/// The three flags after `list` are the original's options of some of the lists (`onlyShowList`,
+/// `allowList`, `ifNoServerBlockCommand`, `applyForPremium`); a list that does not have one ignores it.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Listed {
     pub enabled: bool,
     pub list: Vec<String>,
+    #[serde(default)]
+    pub only_show_list: bool,
+    #[serde(default)]
+    pub allow_list: bool,
+    #[serde(rename = "ifNoServerBlockCommand", default = "yes")]
+    pub if_none_block_command: bool,
+    #[serde(default)]
+    pub apply_for_premium: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Gui {
+    /// The skin shown for a player who has not unlocked a skin in the menu (the original's `gui.notUnlockedSkin`, a texture hash).
+    pub not_unlocked_skin: String,
     pub custom: Listed,
     pub recommendations: Listed,
     pub players: Listed,
@@ -56,6 +99,16 @@ pub struct Gui {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Commands {
+    pub force_default_permissions: bool,
+    pub skin_change_cooldown: i64,
+    pub skin_error_cooldown: i64,
+    pub skull_error_cooldown: i64,
+    pub disable_skin_command: bool,
+    pub disable_skull_command: bool,
+    #[serde(rename = "disableGUICommand")]
+    pub disable_gui_command: bool,
+    pub per_skin_permissions: bool,
+    pub per_skin_permissions_consent: String,
     pub disabled_skins: Listed,
     pub restrict_skin_urls: Listed,
     pub custom_help: CustomHelp,
@@ -70,6 +123,8 @@ pub struct CustomHelp {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageConfig {
+    pub disallow_auto_update_skin: bool,
+    pub skin_expires_after: i64,
     pub default_skins: Listed,
 }
 
@@ -133,6 +188,9 @@ pub struct Advanced {
 #[serde(rename_all = "camelCase")]
 pub struct Api {
     pub ely_by_enabled: bool,
+    /// `api.mineskinSecretSkins`: the port makes no MineSkin upload, so it is read and unused.
+    pub mineskin_secret_skins: bool,
+    pub mojang_batch_window_seconds: u64,
     /// The recommended skins are loaded from `plugins/SkinsRestorer/recommendations.json` only when this is on.
     pub fetch_recommended_skins: bool,
 }
@@ -451,5 +509,31 @@ database:
     #[test]
     fn a_broken_config_yml_is_an_error_not_a_partial_read() {
         assert!(Config::parse_layers(Some("a:\n\tb: 1\n"), "").is_err());
+    }
+
+    #[test]
+    fn the_added_keys_have_the_originals_defaults() {
+        let c = Config::default();
+        assert!(c.login.no_skin_if_login_canceled);
+        assert!(!c.login.always_apply_premium);
+        assert!(c.login.offline_mode_warning.enabled);
+        assert_eq!(c.messages.date_format, "dd MMMM yyyy");
+        assert!(c.messages.per_issuer_locale);
+        assert!(c.commands.force_default_permissions);
+        assert_eq!(c.commands.skin_change_cooldown, 30);
+        assert_eq!(c.commands.skin_error_cooldown, 5);
+        assert!(c.proxy.not_allowed_command_servers.if_none_block_command);
+        assert!(!c.proxy.not_allowed_command_servers.allow_list);
+        assert_eq!(c.gui.not_unlocked_skin.len(), 64);
+        assert_eq!(c.storage.skin_expires_after, 15);
+        assert_eq!(c.api.mojang_batch_window_seconds, 1);
+    }
+
+    #[test]
+    fn the_original_camel_case_keys_are_read() {
+        let c = Config::parse("[commands]\ndisableGUICommand = true\n[login]\nalwaysApplyPremium = true\n[proxy.notAllowedCommandServers]\nifNoServerBlockCommand = false\n").unwrap();
+        assert!(c.commands.disable_gui_command);
+        assert!(c.login.always_apply_premium);
+        assert!(!c.proxy.not_allowed_command_servers.if_none_block_command);
     }
 }

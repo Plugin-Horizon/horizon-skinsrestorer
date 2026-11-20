@@ -55,6 +55,9 @@ playerHeadChatObjects = false
 [api]
 # Adds Ely.by to the /sr status checks.
 elyByEnabled = false
+# Read and unused: the port makes no MineSkin upload (the API key is never kept).
+mineskinSecretSkins = false
+mojangBatchWindowSeconds = 1
 # true: plugins/SkinsRestorer/recommendations.json is read (the recommended skins).
 fetchRecommendedSkins = true
 
@@ -64,17 +67,35 @@ debug = false
 
 # The lists below are the original's config.yml lists. The backend reads them only so that the file is
 # read in full: the proxy shows the menus, runs the commands and makes the default skins.
+[gui]
+# Texture hash of the skin for a player who has not unlocked one (the original's default).
+notUnlockedSkin = "c10591e6909e6a281b371836e462d67a2c78fa0952e910f32b41a26c48c1757c"
+
 [gui.custom]
 enabled = true
+onlyShowList = false
 list = []
 
 [gui.recommendations]
 enabled = true
+onlyShowList = false
 list = []
 
 [gui.players]
 enabled = false
+onlyShowList = false
 list = []
+
+[commands]
+forceDefaultPermissions = true
+skinChangeCooldown = 30
+skinErrorCooldown = 5
+skullErrorCooldown = 5
+disableSkinCommand = false
+disableSkullCommand = false
+disableGUICommand = false
+perSkinPermissions = false
+perSkinPermissionsConsent = ""
 
 [commands.disabledSkins]
 enabled = false
@@ -88,13 +109,32 @@ list = []
 enabled = false
 message = []
 
+[storage]
+disallowAutoUpdateSkin = false
+skinExpiresAfter = 15
+
 [storage.defaultSkins]
 enabled = false
+applyForPremium = false
 list = []
 
 [proxy.notAllowedCommandServers]
 enabled = false
+allowList = false
+ifNoServerBlockCommand = true
 list = []
+
+[login]
+noSkinIfLoginCanceled = true
+alwaysApplyPremium = false
+
+[login.offlineModeWarning]
+enabled = true
+
+[messages]
+disablePrefix = false
+perIssuerLocale = true
+dateFormat = "dd MMMM yyyy"
 
 [horizon]
 # When a join's skin is looked up in the database (only with database.type MYSQL). The original's

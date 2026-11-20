@@ -41,6 +41,7 @@ This is a native trait mod: `horizon-mod.toml`, a `Cargo.toml` that depends on `
   `skinsrestorer.admincommand.dump`; `skinsrestorer.admin` and `skinsrestorer.admincommand.*` also allow
   everything but `dump`, as in the original. Without a permissions provider operator level 2
   stands in (Bukkit's default for these nodes is "op"); `horizon.adminLevel` is not read. The console may do all.
+  The other nodes of the original's permission registry are declared with Bukkit's defaults too (`DECLARED_NODES`).
   The skin commands (`/skin`, `/skull`, `/skins`) stay on the proxy.
 
 ## Config
@@ -79,7 +80,7 @@ What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: .
   `gap-profiles` branch). With it, a reset to the default skin writes an empty `textures` value.
 - A joining player is registered with the core on login (so acks, the menu and skulls work), but a stored skin the join lookup finds cannot be written into the profile without that feature.
 - Mount keeping across a skin refresh is missing.
-- Messages are fixed English text (no `locales/*.json`), `/sr help` is a plain list (cloud's paginated help is not reproduced), `messages.*`, `login.*` and `commands.*` config keys are not read.
+- Messages are fixed English text (no `locales/*.json`), `/sr help` is a plain list (cloud's paginated help is not reproduced). The `messages.*`, `login.*` and `commands.*` keys are read with the original's defaults but not used on the backend (the proxy does the logins and the commands).
 - The apply path needs a SQL back end or proxy payloads; it was not run against either.
 
 ## Licence
