@@ -2,7 +2,7 @@
 
 ## Port status
 
-Compared with SkinsRestorer 15.x (proxy-mode backend) (estimate): **51 %** of the original's commands, permissions, config keys, messages and features work today; **51 %** once our open Horizon PRs are merged; **53 %** with the engine changes we are writing; **69 %** with the newest Horizon SDK. Estimated count: 36/70 items. Status: not yet compiled after the 2026-11-20 round.
+Compared with SkinsRestorer 15.x (proxy-mode backend): item list `audit/rec100/skinsrestorer.md`, 19 of 28 items done (68 %); 6 need engine API that exists in engine main but not in the SDK pin (profile write, refresh, remount, client language, wildcard nodes), 1 exists nowhere. New: `%skinsrestorer_...%` placeholders (feature `placeholderapi`, off).
 
 > **Unofficial Rust port of SkinsRestorer for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the SkinsRestorer authors.**
 

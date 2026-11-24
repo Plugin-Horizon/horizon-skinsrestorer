@@ -93,6 +93,34 @@ fn admin_node(name: &str) -> PermissionNode {
     PermissionNode::new(name, PermissionValueType::Boolean)
 }
 
+/// `%skinsrestorer_...%` for the placeholderapi mod (SRPlaceholderAPIExpansion).
+#[cfg(feature = "placeholderapi")]
+struct Expansion;
+
+#[cfg(feature = "placeholderapi")]
+impl placeholderapi::Expansion for Expansion {
+    fn identifier(&self) -> &str {
+        "skinsrestorer"
+    }
+    fn author(&self) -> &str {
+        "knat, AlexProgrammerDE, Th3Tr0LLeR, McLive, DoNotSpamPls"
+    }
+    fn version(&self) -> &str {
+        env!("CARGO_PKG_VERSION")
+    }
+    fn placeholders(&self) -> Vec<String> {
+        ["skin_name", "skin_name_or_empty", "skin_name_or_player_name", "texture_url", "texture_url_or_empty",
+            "texture_url_or_steve", "texture_url_or_alex", "texture_id", "texture_id_or_empty", "texture_id_or_steve",
+            "texture_id_or_alex"]
+            .iter()
+            .map(|p| format!("%skinsrestorer_{p}%"))
+            .collect()
+    }
+    fn on_request(&self, player: Option<u128>, params: &str) -> Option<String> {
+        core::placeholder(player, params)
+    }
+}
+
 #[derive(Default)]
 struct Mod;
 
@@ -441,6 +469,8 @@ impl Hooks for Mod {
     }
 
     fn server_about_to_start(&self, _: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
+        #[cfg(feature = "placeholderapi")]
+        let _ = placeholderapi::register(Box::new(Expansion));
         // Builds the core now (config, recommended skins, storage), not on the first tick.
         let _ = core::admin_level();
     }

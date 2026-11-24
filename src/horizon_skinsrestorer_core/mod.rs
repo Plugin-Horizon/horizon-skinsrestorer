@@ -22,6 +22,7 @@ pub mod mariadb;
 #[cfg(feature = "net")]
 pub mod net;
 pub mod payload;
+pub mod placeholders;
 pub mod property;
 pub mod skins;
 pub mod sound;
@@ -104,6 +105,8 @@ struct PlayerState {
     had_selection: bool,
     /// A lookup is on its way.
     pending: bool,
+    /// The identifier of the selected skin at the last look (`%skinsrestorer_skin_name%`).
+    skin_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -242,7 +245,8 @@ impl Core {
                     self.note_result(&result);
                     if let Ok(answer) = &result {
                         state.had_selection = matches!(answer.lookup, Lookup::Skin(..));
-                        if let Lookup::Skin(_, p) = &answer.lookup {
+                        if let Lookup::Skin(sel, p) = &answer.lookup {
+                            state.skin_id = Some(sel.identifier.clone());
                             if forwarded.as_ref().map(|f| &f.value) != Some(&p.value) {
                                 replace = Some(Some(p.clone()));
                                 state.shown = Some(p.clone());
@@ -464,6 +468,10 @@ impl Core {
         };
         let wanted = Self::wanted(&answer, st.had_selection);
         st.had_selection = matches!(answer.lookup, Lookup::Skin(..));
+        st.skin_id = match &answer.lookup {
+            Lookup::Skin(sel, _) => Some(sel.identifier.clone()),
+            _ => None,
+        };
         if let Some(p) = wanted {
             self.show(d.player, p);
         }
@@ -978,6 +986,19 @@ pub fn help_suggestions(allowed: &dyn Fn(&str) -> bool) -> Vec<String> {
         .filter(|(syntax, _)| help_sub(syntax).nodes().iter().any(|n| allowed(n)))
         .map(|(syntax, _)| syntax.trim_start_matches("/sr ").to_owned())
         .collect()
+}
+
+/// `%skinsrestorer_<params>%` for an online player (None: not a SkinsRestorer placeholder).
+pub fn placeholder(player: Option<u128>, params: &str) -> Option<String> {
+    with(|c| {
+        let st = player.and_then(|p| c.players.get(&p));
+        placeholders::request(
+            params,
+            st.and_then(|s| s.skin_id.as_deref()),
+            st.and_then(|s| s.shown.as_ref()),
+            st.map(|s| s.name.as_str()),
+        )
+    })
 }
 
 pub fn admin_level() -> u8 {
