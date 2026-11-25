@@ -1018,6 +1018,17 @@ impl api::Mojang for NetMojang {
             Err("built without the net feature".into())
         }
     }
+
+    fn generate(&self, url: &str, variant: Option<&str>) -> Result<(Property, String, String), String> {
+        #[cfg(feature = "net")]
+        return net::mineskin_generate(url, variant, &self.0, &net::MineSkinEnv::live())
+            .map(|g| (g.property, g.mine_skin_id, g.variant.to_owned()));
+        #[cfg(not(feature = "net"))]
+        {
+            let _ = (url, variant);
+            Err("built without the net feature".into())
+        }
+    }
 }
 
 /// One call of the `skinsrestorer:api` service (see [`api`]): the answer line. The lock is not held

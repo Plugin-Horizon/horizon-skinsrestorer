@@ -2,7 +2,7 @@
 
 ## Port status
 
-Compared with SkinsRestorer 15.x (proxy-mode backend): item list `audit/rec100/skinsrestorer.md`, 35 of 36 items done (97 %); the open one is MineSkin skin generation for the API (needs MineSkin's service and key, see ENGINE_NEEDS `external_mineskin`). New: `%skinsrestorer_...%` placeholders (feature `placeholderapi`, off).
+Compared with SkinsRestorer 15.x (proxy-mode backend): item list `audit/rec100/skinsrestorer.md`, 36 of 36 items done (100 %), build checks pending. New: `%skinsrestorer_...%` placeholders (feature `placeholderapi`, off).
 
 > **Unofficial Rust port of SkinsRestorer for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the SkinsRestorer authors.**
 
@@ -54,7 +54,7 @@ The original's `net.skinsrestorer.api` (`SkinsRestorerProvider`, `SkinStorage`, 
 `SkinIdentifier`, `InputDataResult`, `PropertyUtils`, `SkinApplyEvent`) is exposed as the mod service `skinsrestorer:api`:
 `host.commands().call_mod_service("skinsrestorer:api", line)` with one tab-separated line (`<op>` then its arguments), one text
 line back. The ops and the line formats are documented at the top of [src/horizon_skinsrestorer_core/api.rs](src/horizon_skinsrestorer_core/api.rs).
-Writes need `database.type: MYSQL`; Mojang lookups need the `net` feature. Skins generated from an image URL (MineSkin) are not covered.
+Writes need `database.type: MYSQL`; Mojang lookups need the `net` feature. Skins from an image URL are generated through MineSkin (`api.mineskinAPIKey` optional, `"key"`/empty means none; never printed or dumped).
 
 ## Config
 

@@ -200,12 +200,33 @@ pub struct Advanced {
     pub player_head_chat_objects: bool,
 }
 
+/// A value that is never printed.
+#[derive(Clone, Default, Deserialize)]
+#[serde(transparent)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn get(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<hidden>")
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Api {
     pub ely_by_enabled: bool,
-    /// `api.mineskinSecretSkins`: the port makes no MineSkin upload, so it is read and unused.
+    /// `api.mineskinSecretSkins`: generated skins are `unlisted` instead of `public` on MineSkin.
     pub mineskin_secret_skins: bool,
+    /// `api.mineskinAPIKey` (`""` and `"key"` mean no key). Kept for the MineSkin client only: never
+    /// serialized, never printed (`Debug` shows `<hidden>`), never in the dump.
+    #[serde(rename = "mineskinAPIKey", skip_serializing)]
+    pub mineskin_api_key: Secret,
     pub mojang_batch_window_seconds: u64,
     /// The recommended skins are loaded from `plugins/SkinsRestorer/recommendations.json` only when this is on.
     pub fetch_recommended_skins: bool,

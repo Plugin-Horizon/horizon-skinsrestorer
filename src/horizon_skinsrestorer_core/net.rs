@@ -300,3 +300,300 @@ mod tests {
         assert!(checks.iter().all(|c| !c.ok && c.text.contains("Connections are disabled.")));
     }
 }
+
+// ---- MineSkin (`MineSkinAPIImpl`): a skin generated from an image URL ----
+
+pub const MINESKIN_ENDPOINT: &str = "https://api.mineskin.org/v2/generate";
+pub const AXOLOTL_ENDPOINT: &str = "https://axolotl.skinsrestorer.net/mineskin/decrypt-url";
+const MINESKIN_AGENT: &str = "SkinsRestorer/MineSkinAPI";
+const AXOLOTL_PREFIX: &str = "skinsrestorer-axolotl://";
+const MINESKIN_RETRIES: u32 = 5;
+
+/// The English texts of the original's `Message` constants a MineSkin failure ends in
+/// (`locales/locale.json`).
+pub const MS_FULL: &str = "MineSkin timed out while it uploaded your skin. Try again later.";
+pub const MS_API_FAILED: &str = "MineSkin is overloaded. Try again later.";
+pub const MS_API_KEY_INVALID: &str = "The MineSkin API key is invalid. Contact the server owner.";
+pub const INVALID_URLSKIN: &str = "The skin URL or file format is invalid.";
+
+/// `SRHelpers.sanitizeImageURL`: a NameMC skin page becomes its image.
+pub fn sanitize_image_url(url: &str) -> String {
+    let rest = url.strip_prefix("https://").or_else(|| url.strip_prefix("http://"));
+    if let Some(rest) = rest {
+        let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
+        let host = host.split(':').next().unwrap_or("");
+        if host == "namemc.com" || host.ends_with(".namemc.com") {
+            if let Some(id) = path.strip_prefix("skin/") {
+                return format!("https://s.namemc.com/i/{id}.png");
+            }
+        }
+    }
+    url.to_owned()
+}
+
+/// What a generated skin is: the signed property, MineSkin's id and the variant it came out as.
+#[derive(Clone, Debug)]
+pub struct Generated {
+    pub property: crate::horizon_skinsrestorer_core::property::Property,
+    pub mine_skin_id: String,
+    pub variant: &'static str,
+}
+
+/// Where the requests go and how waiting is done (a test points them at a local server and skips the sleeps).
+pub struct MineSkinEnv<'a> {
+    pub endpoint: &'a str,
+    pub axolotl: &'a str,
+    pub sleep: &'a dyn Fn(Duration),
+}
+
+impl MineSkinEnv<'static> {
+    pub fn live() -> Self {
+        Self { endpoint: MINESKIN_ENDPOINT, axolotl: AXOLOTL_ENDPOINT, sleep: &std::thread::sleep }
+    }
+}
+
+fn axolotl_url(url: &str, env: &MineSkinEnv, cfg: &Config) -> Result<String, String> {
+    if !url.starts_with(AXOLOTL_PREFIX) {
+        return Ok(url.to_owned());
+    }
+    let enc: String = url
+        .bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => (b as char).to_string(),
+            _ => format!("%{b:02X}"),
+        })
+        .collect();
+    if !cfg.connections_allowed() {
+        return Err("Connections are disabled.".into());
+    }
+    let r = finish(
+        agent(30_000)
+            .get(&format!("{}?encryptedUrl={enc}", env.axolotl))
+            .set("User-Agent", MINESKIN_AGENT)
+            .set("Accept", "application/json")
+            .call(),
+    )?;
+    let err_of = |r: &Response, fallback: &str| {
+        json(r).and_then(|v| v.get("error")?.as_str().map(str::to_owned)).unwrap_or_else(|| fallback.to_owned())
+    };
+    match r.code {
+        200 => json(&r)
+            .and_then(|v| v.get("url")?.as_str().map(str::to_owned))
+            .filter(|u| !u.is_empty())
+            .ok_or_else(|| "Invalid decrypt response: missing URL".into()),
+        400 => Err(format!("Failed to decrypt axolotl URL: {}", err_of(&r, "Malformed ciphertext"))),
+        500 => Err(format!("Axolotl decrypt service error: {}", err_of(&r, "Server configuration error"))),
+        c => Err(format!("Unexpected decrypt response: {c}")),
+    }
+}
+
+/// `MineSkinAPIImpl.genSkin`: POST the image URL to MineSkin (with `Authorization: Bearer <key>` when
+/// `api.mineskinAPIKey` is set to something other than `""`/`"key"`), retry as the original does and map
+/// failures to its messages. `variant` is `CLASSIC`, `SLIM` or None (MineSkin decides). The key is never
+/// logged. Err holds the text the original's exception ends in.
+pub fn mineskin_generate(
+    image_url: &str,
+    variant: Option<&str>,
+    cfg: &Config,
+    env: &MineSkinEnv,
+) -> Result<Generated, String> {
+    use crate::horizon_skinsrestorer_core::property::Property;
+    if !cfg.connections_allowed() {
+        return Err("Connections are disabled.".into());
+    }
+    let url = sanitize_image_url(&axolotl_url(image_url, env, cfg)?);
+    let key = cfg.api.mineskin_api_key.get();
+    let body = serde_json::json!({
+        "variant": match variant { Some("SLIM") => "slim", Some("CLASSIC") => "classic", _ => "unknown" },
+        "visibility": if cfg.api.mineskin_secret_skins { "unlisted" } else { "public" },
+        "url": url,
+    })
+    .to_string();
+    let mut next_at = std::time::Instant::now();
+    for _ in 0..MINESKIN_RETRIES {
+        let wait = next_at.saturating_duration_since(std::time::Instant::now());
+        if !wait.is_zero() {
+            (env.sleep)(wait);
+        }
+        let mut last = Err(String::new());
+        for _ in 0..3 {
+            let mut req = agent(90_000)
+                .post(env.endpoint)
+                .set("User-Agent", MINESKIN_AGENT)
+                .set("Content-Type", "application/json")
+                .set("Accept", "application/json");
+            if !key.is_empty() && key != "key" {
+                req = req.set("Authorization", &format!("Bearer {key}"));
+            }
+            last = finish(req.send_string(&body));
+            if last.is_ok() {
+                break;
+            }
+        }
+        let r = last?;
+        if !matches!(r.code, 200 | 400 | 403 | 429 | 500) {
+            return Err(format!("MineSkin error: {}", r.code));
+        }
+        let v = json(&r).ok_or_else(|| format!("Empty MineSkin response: {}", r.code))?;
+        if let Some(ms) = v.pointer("/rateLimit/next/relative").and_then(|x| x.as_u64()) {
+            next_at = next_at.max(std::time::Instant::now() + Duration::from_millis(ms));
+        }
+        if r.code == 200 && v.get("success").and_then(|s| s.as_bool()) == Some(true) {
+            let skin = v.get("skin").ok_or("Missing MineSkin skin")?;
+            let data = skin.pointer("/texture/data").ok_or("Missing MineSkin texture")?;
+            let property = Property::new(
+                data.get("value").and_then(|x| x.as_str()).unwrap_or(""),
+                data.get("signature").and_then(|x| x.as_str()).map(str::to_owned),
+            );
+            let slim = property.textures().is_some_and(|t| t.slim);
+            return Ok(Generated {
+                property,
+                mine_skin_id: skin.get("uuid").and_then(|x| x.as_str()).unwrap_or("").to_owned(),
+                variant: if slim { "SLIM" } else { "CLASSIC" },
+            });
+        }
+        let Some(errors) = v.get("errors").and_then(|e| e.as_array()) else {
+            return Err(format!("Missing MineSkin errors: {}", r.code));
+        };
+        let Some(first) = errors.first() else {
+            return Err(MS_API_FAILED.into());
+        };
+        match first.get("code").and_then(|c| c.as_str()).unwrap_or("") {
+            "rate_limit" => {}
+            "failed_to_create_id" | "skin_change_failed" => {
+                next_at = next_at.max(std::time::Instant::now() + Duration::from_secs(6));
+            }
+            "no_account_available" => return Err(MS_FULL.into()),
+            "invalid_api_key" => {
+                match first.get("message").and_then(|m| m.as_str()).unwrap_or("") {
+                    "Invalid API Key" => log::error!("[SkinsRestorer] The API Key provided is not registered on MineSkin! Please empty \"api.mineskinAPIKey\" in plugins/SkinsRestorer/config.yml and run /sr reload"),
+                    "Client not allowed" => log::error!("[SkinsRestorer] This server ip is not on the api key allowed IPs list!"),
+                    "Origin not allowed" => log::error!("[SkinsRestorer] This server Origin is not on the api key allowed Origins list!"),
+                    "Agent not allowed" => log::error!("[SkinsRestorer] SkinsRestorer's agent \"{MINESKIN_AGENT}\" is not on the api key allowed agents list!"),
+                    _ => log::error!("[SkinsRestorer] MineSkin API key is invalid, unknown error, please report this to SkinsRestorer's Discord!"),
+                }
+                return Err(MS_API_KEY_INVALID.into());
+            }
+            _ => return Err(INVALID_URLSKIN.into()),
+        }
+    }
+    Err(MS_API_FAILED.into())
+}
+
+#[cfg(test)]
+mod mineskin_tests {
+    use super::*;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+    use std::sync::{Arc, Mutex};
+
+    /// A local server answering the canned `(status, body)` list in order; it records the raw requests.
+    fn serve(replies: Vec<(u16, String)>) -> (String, Arc<Mutex<Vec<String>>>) {
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = l.local_addr().unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s2 = seen.clone();
+        std::thread::spawn(move || {
+            for (code, body) in replies {
+                let Ok((mut c, _)) = l.accept() else { return };
+                let mut buf = vec![0u8; 8192];
+                let mut got = Vec::new();
+                loop {
+                    let n = c.read(&mut buf).unwrap_or(0);
+                    got.extend_from_slice(&buf[..n]);
+                    let t = String::from_utf8_lossy(&got).to_string();
+                    if let Some(h) = t.find("\r\n\r\n") {
+                        let len = t[..h]
+                            .lines()
+                            .find_map(|l| l.to_ascii_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                            .unwrap_or(0);
+                        if got.len() >= h + 4 + len || n == 0 {
+                            break;
+                        }
+                    } else if n == 0 {
+                        break;
+                    }
+                }
+                s2.lock().unwrap().push(String::from_utf8_lossy(&got).to_string());
+                let _ = write!(c, "HTTP/1.1 {code} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+            }
+        });
+        (format!("http://{addr}/v2/generate"), seen)
+    }
+
+    fn ok_body() -> String {
+        let p = crate::horizon_skinsrestorer_core::property::tests::sample("g1", true);
+        serde_json::json!({"success": true, "skin": {"uuid": "ms-id", "texture": {"data": {"value": p.value, "signature": p.signature}}}}).to_string()
+    }
+
+    fn err_body(code: &str, msg: &str) -> String {
+        serde_json::json!({"success": false, "errors": [{"code": code, "message": msg}]}).to_string()
+    }
+
+    fn run(replies: Vec<(u16, String)>, cfg: &Config) -> (Result<Generated, String>, Vec<String>, usize) {
+        let (url, seen) = serve(replies);
+        let slept = Mutex::new(0usize);
+        let sleep = |_: Duration| *slept.lock().unwrap() += 1;
+        let env = MineSkinEnv { endpoint: &url, axolotl: "http://127.0.0.1:1/x", sleep: &sleep };
+        let r = mineskin_generate("https://example.test/a.png", Some("SLIM"), cfg, &env);
+        let n = *slept.lock().unwrap();
+        let s = seen.lock().unwrap().clone();
+        (r, s, n)
+    }
+
+    #[test]
+    fn a_generated_skin_is_returned_and_the_request_has_the_originals_shape() {
+        let (r, seen, _) = run(vec![(200, ok_body())], &Config::default());
+        let g = r.unwrap();
+        assert_eq!((g.mine_skin_id.as_str(), g.variant), ("ms-id", "SLIM"));
+        let req = &seen[0];
+        assert!(req.starts_with("POST /v2/generate"));
+        assert!(req.to_ascii_lowercase().contains("user-agent: skinsrestorer/mineskinapi"));
+        assert!(!req.to_ascii_lowercase().contains("authorization"));
+        assert!(req.contains(r#""variant":"slim""#) && req.contains(r#""visibility":"public""#));
+        assert!(req.contains(r#""url":"https://example.test/a.png""#));
+    }
+
+    #[test]
+    fn a_key_goes_as_bearer_and_the_placeholder_key_does_not() {
+        let cfg = Config::parse_layers(Some("api:\n  mineskinAPIKey: fake-test-key\n  mineskinSecretSkins: true\n"), "").unwrap();
+        let (_, seen, _) = run(vec![(200, ok_body())], &cfg);
+        assert!(seen[0].contains("Bearer fake-test-key"));
+        assert!(seen[0].contains(r#""visibility":"unlisted""#));
+        let cfg = Config::parse_layers(Some("api:\n  mineskinAPIKey: key\n"), "").unwrap();
+        let (_, seen, _) = run(vec![(200, ok_body())], &cfg);
+        assert!(!seen[0].to_ascii_lowercase().contains("authorization"));
+    }
+
+    #[test]
+    fn rate_limits_are_retried_up_to_five_times_then_overloaded() {
+        let rl = err_body("rate_limit", "slow down");
+        let (r, seen, slept) = run(vec![(429, rl.clone()), (429, rl.clone()), (200, ok_body())], &Config::default());
+        assert!(r.is_ok());
+        assert_eq!(seen.len(), 3);
+        let _ = slept;
+        let (r, seen, _) = run(vec![(429, rl.clone()); 5], &Config::default());
+        assert_eq!(r.unwrap_err(), MS_API_FAILED);
+        assert_eq!(seen.len(), 5);
+    }
+
+    #[test]
+    fn the_error_codes_map_to_the_originals_messages() {
+        let cfg = Config::default();
+        assert_eq!(run(vec![(400, err_body("no_account_available", ""))], &cfg).0.unwrap_err(), MS_FULL);
+        assert_eq!(run(vec![(403, err_body("invalid_api_key", "Invalid API Key"))], &cfg).0.unwrap_err(), MS_API_KEY_INVALID);
+        assert_eq!(run(vec![(400, err_body("invalid_image", ""))], &cfg).0.unwrap_err(), INVALID_URLSKIN);
+        assert_eq!(run(vec![(418, "{}".into())], &cfg).0.unwrap_err(), "MineSkin error: 418");
+        assert_eq!(run(vec![(500, "{}".into())], &cfg).0.unwrap_err(), "Missing MineSkin errors: 500");
+        let (r, _, slept) = run(vec![(400, err_body("failed_to_create_id", "")), (200, ok_body())], &cfg);
+        assert!(r.is_ok());
+        assert_eq!(slept, 1);
+    }
+
+    #[test]
+    fn namemc_pages_become_their_image() {
+        assert_eq!(sanitize_image_url("https://namemc.com/skin/abc123"), "https://s.namemc.com/i/abc123.png");
+        assert_eq!(sanitize_image_url("https://example.test/skin/abc"), "https://example.test/skin/abc");
+        assert_eq!(sanitize_image_url("not a url"), "not a url");
+    }
+}

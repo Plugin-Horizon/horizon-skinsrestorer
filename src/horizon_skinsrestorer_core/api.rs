@@ -35,8 +35,9 @@
 //!   ([`apply_event`]); the answer `cancel` cancels the apply, `set\t<value>\t<signature>` replaces the property
 //!   ([`parse_verdict`]), anything else leaves it. A subscriber whose mod is gone is dropped.
 //!
-//! Not covered: skins generated from an image URL by MineSkin (`find_or_create_skin_data` of a URL not stored
-//! answers `error`), which needs MineSkin's service and the proxy's key.
+//! A URL that is not stored is generated through MineSkin by `find_or_create_skin_data` (`net::mineskin_generate`,
+//! key from `api.mineskinAPIKey`), stored with its index, and answered; a failure answers `error\t<the original's
+//! message>`.
 use crate::horizon_skinsrestorer_core::property::{parse_uuid, uuid_dashed, Property};
 use crate::horizon_skinsrestorer_core::storage::{Lookup, Selection, SkinType, Storage};
 use std::collections::HashMap;
@@ -44,6 +45,8 @@ use std::collections::HashMap;
 /// `MojangAPI`: an account's name or UUID to its UUID, last name and signed skin.
 pub trait Mojang {
     fn profile(&self, input: &str) -> Result<Option<(u128, String, Property)>, String>;
+    /// `MineSkinAPI.genSkin`: (property, MineSkin id, variant `CLASSIC`/`SLIM`); Err is the original's message.
+    fn generate(&self, url: &str, variant: Option<&str>) -> Result<(Property, String, String), String>;
 }
 
 /// What an apply call leaves for the core to do.
@@ -197,7 +200,15 @@ fn find(ctx: &Ctx, input: &str, hint: Option<String>, create: bool) -> Result<St
         let sel = Selection { identifier: input.into(), kind: SkinType::Url, variant: hint };
         return Ok(match st.skin(&sel)? {
             Some(p) => found(sel, p),
-            None if create => return Err("MineSkin is not available in this port".into()),
+            None if create => {
+                // `findOrCreateSkinData`: generate through MineSkin, store the skin and (no variant asked) the index.
+                let (p, id, var) = ctx.mojang.generate(input, sel.variant.as_deref())?;
+                st.set_url_skin(input, Some(&id), &p, &var)?;
+                if sel.variant.is_none() {
+                    st.set_url_index(input, &var)?;
+                }
+                found(Selection { identifier: input.into(), kind: SkinType::Url, variant: Some(var) }, p)
+            }
             None => "none".into(),
         });
     }
@@ -360,10 +371,16 @@ mod tests {
 
     const U: u128 = 0x1111;
 
-    struct Fake(Option<(u128, String, Property)>);
+    struct Fake(Option<(u128, String, Property)>, Option<Result<(Property, String), String>>);
     impl Mojang for Fake {
         fn profile(&self, _: &str) -> Result<Option<(u128, String, Property)>, String> {
             Ok(self.0.clone())
+        }
+        fn generate(&self, _: &str, v: Option<&str>) -> Result<(Property, String, String), String> {
+            match &self.1 {
+                Some(r) => r.clone().map(|(p, id)| (p, id, v.unwrap_or("CLASSIC").to_owned())),
+                None => Err("MineSkin is overloaded. Try again later.".into()),
+            }
         }
     }
 
@@ -373,7 +390,7 @@ mod tests {
     }
 
     fn plain(st: &Storage, line: &str) -> String {
-        call(st, &[], &Fake(None), line).0
+        call(st, &[], &Fake(None, None), line).0
     }
 
     fn setup() -> (Storage, Arc<MemorySql>) {
@@ -424,12 +441,12 @@ mod tests {
         let (st, mem) = setup();
         let own = sample("own", false);
         mem.put(PLAYER, &[&uuid_dashed(U)], vec![Some(own.value.clone()), own.signature.clone()]);
-        let (r, _) = call(&st, &[], &Fake(None), &format!("get_skin_for_player\t{}\tbob", uuid_dashed(U)));
+        let (r, _) = call(&st, &[], &Fake(None, None), &format!("get_skin_for_player\t{}\tbob", uuid_dashed(U)));
         assert_eq!(r, format!("{}\t{}", own.value, own.signature.clone().unwrap()));
         // Nothing stored: Mojang's answer is used and written.
         let other = 0x2222u128;
         let fetched = sample("fetched", false);
-        let fake = Fake(Some((other, "carol".into(), fetched.clone())));
+        let fake = Fake(Some((other, "carol".into(), fetched.clone())), None);
         let (r, _) = call(&st, &[], &fake, &format!("get_skin_id_for_player\t{}\tcarol", uuid_dashed(other)));
         assert_eq!(r, format!("{}\tPLAYER\t", uuid_dashed(other)));
         let ex = mem.executed.lock().unwrap();
@@ -479,7 +496,7 @@ mod tests {
         mem.fail.store(true, std::sync::atomic::Ordering::Relaxed);
         assert_eq!(plain(&st, "set_custom_skin_data\ta\tb\tc"), "error\tdatabase down");
         let online = HashMap::new();
-        let none = Ctx { storage: None, online: &online, mojang: &Fake(None), now_secs: 0 };
+        let none = Ctx { storage: None, online: &online, mojang: &Fake(None, None), now_secs: 0 };
         assert_eq!(handle(&none, "get_skin_id_of_player\t0000").0, "error\tnot a UUID: 0000");
         assert_eq!(
             handle(&none, &format!("get_skin_id_of_player\t{}", uuid_dashed(U))).0,
@@ -505,12 +522,24 @@ mod tests {
         assert_eq!(plain(&st, "find_skin_data\thttps://x/none.png\tslim"), "none");
         assert_eq!(
             plain(&st, "find_or_create_skin_data\thttps://x/none.png\tslim"),
-            "error\tMineSkin is not available in this port"
+            "error\tMineSkin is overloaded. Try again later."
         );
+        // Generated: stored with its id; without a variant the index is stored too.
+        let g = sample("gen", false);
+        let fake = Fake(None, Some(Ok((g.clone(), "ms1".into()))));
+        let (r, _) = call(&st, &[], &fake, "find_or_create_skin_data\thttps://x/new.png");
+        assert_eq!(r, format!("https://x/new.png\tURL\tCLASSIC\t{}\t{}", g.value, g.signature.clone().unwrap()));
+        let ex = mem.executed.lock().unwrap();
+        assert!(ex[0].0.starts_with("INSERT INTO sr_url_skins"));
+        assert_eq!(ex[0].1[1].as_deref(), Some("ms1"));
+        assert!(ex[1].0.starts_with("INSERT INTO sr_url_index"));
+        drop(ex);
+        let (r, _) = call(&st, &[], &Fake(None, Some(Err("x".into()))), "find_or_create_skin_data\thttps://x/n2.png\tslim");
+        assert_eq!(r, "error\tx");
         // An online player's cached skin is found by name.
         let own = sample("own", false);
         mem.put(PLAYER, &[&uuid_dashed(U)], vec![Some(own.value.clone()), own.signature.clone()]);
-        let (r, _) = call(&st, &[("Bob", U)], &Fake(None), "find_skin_data\tbob");
+        let (r, _) = call(&st, &[("Bob", U)], &Fake(None, None), "find_skin_data\tbob");
         assert_eq!(r, format!("{}\tPLAYER\t\t{}\t{}", uuid_dashed(U), own.value, own.signature.unwrap()));
     }
 
@@ -518,7 +547,7 @@ mod tests {
     fn find_or_create_and_get_player_skin_fetch_from_mojang_and_store() {
         let (st, mem) = setup();
         let p = sample("m1", false);
-        let fake = Fake(Some((U, "bob".into(), p.clone())));
+        let fake = Fake(Some((U, "bob".into(), p.clone())), None);
         let want = format!("{}\t{}\t{}", uuid_dashed(U), p.value, p.signature.clone().unwrap());
         assert_eq!(call(&st, &[], &fake, "get_player_skin\tbob").0, want);
         assert_eq!(
@@ -528,8 +557,8 @@ mod tests {
         assert_eq!(mem.executed.lock().unwrap().len(), 2);
         assert_eq!(call(&st, &[], &fake, &format!("update_player_skin_data\t{}", uuid_dashed(U))).0, format!("{}\t{}", p.value, p.signature.unwrap()));
         assert_eq!(call(&st, &[], &fake, "get_uuid\tbob").0, uuid_dashed(U));
-        assert_eq!(call(&st, &[("Bob", 5)], &Fake(None), "get_uuid\tbob").0, uuid_dashed(5));
-        assert_eq!(call(&st, &[], &Fake(None), "get_player_skin\tghost").0, "none");
+        assert_eq!(call(&st, &[("Bob", 5)], &Fake(None, None), "get_uuid\tbob").0, uuid_dashed(5));
+        assert_eq!(call(&st, &[], &Fake(None, None), "get_player_skin\tghost").0, "none");
     }
 
     #[test]
@@ -542,28 +571,28 @@ mod tests {
         assert_eq!(parse_verdict("set\t\t"), Verdict::Set(None));
         assert_eq!(parse_verdict("whatever"), Verdict::Keep);
         let (st, _) = setup();
-        let (r, fx) = call(&st, &[], &Fake(None), "subscribe\tpvpbot");
+        let (r, fx) = call(&st, &[], &Fake(None, None), "subscribe\tpvpbot");
         assert_eq!((r.as_str(), fx), ("true", vec![Effect::Subscribe("pvpbot".into())]));
-        assert_eq!(call(&st, &[], &Fake(None), "unsubscribe\tpvpbot").1, vec![Effect::Unsubscribe("pvpbot".into())]);
+        assert_eq!(call(&st, &[], &Fake(None, None), "unsubscribe\tpvpbot").1, vec![Effect::Unsubscribe("pvpbot".into())]);
     }
 
     #[test]
     fn the_applier_queues_for_online_players_only() {
         let (st, mem) = setup();
         let u = uuid_dashed(U);
-        let (r, fx) = call(&st, &[("Bob", U)], &Fake(None), &format!("apply_skin\t{u}\tVAL\tSIG"));
+        let (r, fx) = call(&st, &[("Bob", U)], &Fake(None, None), &format!("apply_skin\t{u}\tVAL\tSIG"));
         assert_eq!(r, "true");
         assert_eq!(fx, vec![Effect::Apply(U, Some(make_prop("VAL", "SIG")))]);
-        let (r, fx) = call(&st, &[], &Fake(None), &format!("apply_skin\t{u}\tVAL\tSIG"));
+        let (r, fx) = call(&st, &[], &Fake(None, None), &format!("apply_skin\t{u}\tVAL\tSIG"));
         assert_eq!((r.as_str(), fx.len()), ("false", 0));
-        let (r, fx) = call(&st, &[("Bob", U)], &Fake(None), &format!("reset_skin\t{u}"));
+        let (r, fx) = call(&st, &[("Bob", U)], &Fake(None, None), &format!("reset_skin\t{u}"));
         assert_eq!((r.as_str(), fx), ("true", vec![Effect::Apply(U, None)]));
         let c = crate::horizon_skinsrestorer_core::storage::tests::select_custom(&mem, U, "knight", "h9");
-        let (r, fx) = call(&st, &[("Bob", U)], &Fake(None), &format!("apply_skin_of\t{u}"));
+        let (r, fx) = call(&st, &[("Bob", U)], &Fake(None, None), &format!("apply_skin_of\t{u}"));
         assert_eq!((r.as_str(), fx), ("true", vec![Effect::Apply(U, Some(c.clone()))]));
         mem.put(CUSTOM, &["castle"], vec![Some(c.value.clone()), c.signature.clone()]);
-        let (_, fx) = call(&st, &[("Bob", U)], &Fake(None), &format!("apply_skin_id\t{u}\tcastle\tCUSTOM"));
+        let (_, fx) = call(&st, &[("Bob", U)], &Fake(None, None), &format!("apply_skin_id\t{u}\tcastle\tCUSTOM"));
         assert_eq!(fx, vec![Effect::Apply(U, Some(c))]);
-        assert_eq!(call(&st, &[("Bob", U)], &Fake(None), &format!("apply_skin_id\t{u}\tmissing\tCUSTOM")).0, "error\tno such skin");
+        assert_eq!(call(&st, &[("Bob", U)], &Fake(None, None), &format!("apply_skin_id\t{u}\tmissing\tCUSTOM")).0, "error\tno such skin");
     }
 }
