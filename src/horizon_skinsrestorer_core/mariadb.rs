@@ -107,6 +107,21 @@ impl Sql for MariaDb {
                 .collect()
         }))
     }
+    fn execute(&self, sql: &str, binds: &[Option<String>]) -> Result<(), String> {
+        self.run(sql, binds)
+    }
+}
+
+impl MariaDb {
+    fn run(&self, sql: &str, binds: &[Option<String>]) -> Result<(), String> {
+        let mut conn = self.pool()?.try_get_conn(self.timeout).map_err(|e| e.to_string())?;
+        let params = if binds.is_empty() {
+            mysql::Params::Empty
+        } else {
+            mysql::Params::Positional(binds.iter().cloned().map(mysql::Value::from).collect())
+        };
+        conn.exec_drop(sql, params).map_err(|e| e.to_string())
+    }
 }
 
 #[cfg(test)]

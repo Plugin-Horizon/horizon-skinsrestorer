@@ -98,6 +98,43 @@ fn bulk_id(r: &Response, name: &str) -> Option<u128> {
     parse_uuid(entry.get("id")?.as_str()?)
 }
 
+/// `MojangAPI.getSkin`: an account's name or UUID to its UUID, last name and signed skin (None: no such
+/// account or no skin). Mojang's lookup by name, then the session server's profile.
+pub fn mojang_profile(
+    input: &str,
+    cfg: &Config,
+) -> Result<Option<(u128, String, crate::horizon_skinsrestorer_core::property::Property)>, String> {
+    let uuid = match parse_uuid(input) {
+        Some(u) => u,
+        None => {
+            if input.is_empty() || !input.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+                return Ok(None);
+            }
+            let r = get(&format!("https://api.minecraftservices.com/minecraft/profile/lookup/name/{input}"), cfg)?;
+            match r.code {
+                200 => match json(&r).and_then(|v| parse_uuid(v.get("id")?.as_str()?)) {
+                    Some(u) => u,
+                    None => return Ok(None),
+                },
+                204 | 404 => return Ok(None),
+                c => return Err(format!("Mojang answered {c}")),
+            }
+        }
+    };
+    let r = get(&format!("{PROFILE_MOJANG}{}?unsigned=false", uuid_plain(uuid)), cfg)?;
+    match r.code {
+        200 => {
+            let v = json(&r).ok_or("unreadable profile")?;
+            let name = v.get("name").and_then(|n| n.as_str()).unwrap_or("").to_owned();
+            Ok(first_property(&v, true).map(|(value, sig)| {
+                (uuid, name, crate::horizon_skinsrestorer_core::property::Property::new(value, Some(sig)))
+            }))
+        }
+        204 | 404 => Ok(None),
+        c => Err(format!("Mojang answered {c}")),
+    }
+}
+
 fn short(value: &str) -> String {
     crate::horizon_skinsrestorer_core::property::Property::new(value, None).short_hash()
 }

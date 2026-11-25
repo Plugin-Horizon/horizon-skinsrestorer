@@ -2,7 +2,7 @@
 
 ## Port status
 
-Compared with SkinsRestorer 15.x (proxy-mode backend): item list `audit/rec100/skinsrestorer.md`, 19 of 28 items done (68 %); 6 need engine API that exists in engine main but not in the SDK pin (profile write, refresh, remount, client language, wildcard nodes), 1 exists nowhere. New: `%skinsrestorer_...%` placeholders (feature `placeholderapi`, off).
+Compared with SkinsRestorer 15.x (proxy-mode backend): item list `audit/rec100/skinsrestorer.md`, 35 of 36 items done (97 %); the open one is MineSkin skin generation for the API (needs MineSkin's service and key, see ENGINE_NEEDS `external_mineskin`). New: `%skinsrestorer_...%` placeholders (feature `placeholderapi`, off).
 
 > **Unofficial Rust port of SkinsRestorer for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the SkinsRestorer authors.**
 
@@ -47,6 +47,14 @@ This is a native trait mod: `horizon-mod.toml`, a `Cargo.toml` that depends on `
   stands in (Bukkit's default for these nodes is "op"); `horizon.adminLevel` is not read. The console may do all.
   The other nodes of the original's permission registry are declared with Bukkit's defaults too (`DECLARED_NODES`).
   The skin commands (`/skin`, `/skull`, `/skins`) stay on the proxy.
+
+## Java API for other mods
+
+The original's `net.skinsrestorer.api` (`SkinsRestorerProvider`, `SkinStorage`, `PlayerStorage`, `SkinApplier`, `SkinProperty`,
+`SkinIdentifier`, `InputDataResult`, `PropertyUtils`, `SkinApplyEvent`) is exposed as the mod service `skinsrestorer:api`:
+`host.commands().call_mod_service("skinsrestorer:api", line)` with one tab-separated line (`<op>` then its arguments), one text
+line back. The ops and the line formats are documented at the top of [src/horizon_skinsrestorer_core/api.rs](src/horizon_skinsrestorer_core/api.rs).
+Writes need `database.type: MYSQL`; Mojang lookups need the `net` feature. Skins generated from an image URL (MineSkin) are not covered.
 
 ## Config
 

@@ -14,6 +14,7 @@
 //! - `/sr`, `/sr help`, `/sr status` and `/sr dump`, the commands a proxy-mode backend has.
 //!
 //! The engine glue (the bundle's helpers) turns [`Action`]s into packets.
+pub mod api;
 pub mod config;
 pub mod gui;
 pub mod jobs;
@@ -139,6 +140,8 @@ pub struct Core {
     /// Lines from command threads, taken by the next tick.
     outbox: Arc<Mutex<Vec<Action>>>,
     menus: HashMap<u128, OpenMenu>,
+    /// Mods that listen to `SkinApplyEvent` (their service `<id>:skinsrestorer_event`).
+    pub subscribers: Vec<String>,
     pub stats: Stats,
 }
 
@@ -156,6 +159,7 @@ impl Core {
             queued: Vec::new(),
             outbox: Arc::new(Mutex::new(Vec::new())),
             menus: HashMap::new(),
+            subscribers: Vec::new(),
             stats: Stats::default(),
         }
     }
@@ -999,6 +1003,61 @@ pub fn placeholder(player: Option<u128>, params: &str) -> Option<String> {
             st.map(|s| s.name.as_str()),
         )
     })
+}
+
+/// The lookups of the API against Mojang (feature `net`).
+struct NetMojang(Config);
+
+impl api::Mojang for NetMojang {
+    fn profile(&self, input: &str) -> Result<Option<(u128, String, Property)>, String> {
+        #[cfg(feature = "net")]
+        return net::mojang_profile(input, &self.0);
+        #[cfg(not(feature = "net"))]
+        {
+            let _ = input;
+            Err("built without the net feature".into())
+        }
+    }
+}
+
+/// One call of the `skinsrestorer:api` service (see [`api`]): the answer line. The lock is not held
+/// during storage and network work; the applies it asks for are queued for the next tick.
+pub fn api_call(line: &str) -> String {
+    let (storage, online, cfg) = with(|c| {
+        let online: HashMap<String, u128> = c.players.iter().map(|(u, s)| (s.name.to_ascii_lowercase(), *u)).collect();
+        (c.storage.clone(), online, c.cfg.clone())
+    });
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let ctx = api::Ctx { storage: storage.as_deref(), online: &online, mojang: &NetMojang(cfg), now_secs };
+    let (answer, effects) = api::handle(&ctx, line);
+    if !effects.is_empty() {
+        with(|c| {
+            for e in effects {
+                match e {
+                    api::Effect::Apply(player, property) => c.apply(player, property),
+                    api::Effect::Subscribe(id) => {
+                        if !c.subscribers.contains(&id) {
+                            c.subscribers.push(id);
+                        }
+                    }
+                    api::Effect::Unsubscribe(id) => c.subscribers.retain(|s| *s != id),
+                }
+            }
+        });
+    }
+    answer
+}
+
+/// The mods that listen to `SkinApplyEvent`.
+pub fn api_subscribers() -> Vec<String> {
+    with(|c| c.subscribers.clone())
+}
+
+/// A subscriber whose mod is not loaded any more.
+pub fn api_unsubscribe(id: &str) {
+    with(|c| c.subscribers.retain(|s| s != id))
 }
 
 pub fn admin_level() -> u8 {

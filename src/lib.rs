@@ -23,7 +23,7 @@ use crate::horizon_skinsrestorer_core::sound::Sound;
 use crate::horizon_skinsrestorer_core::{self as core, Action, Refresh};
 use mod_api::{
     Command, CommandArgumentValue, CommandSource, Flow, Hooks, Identifier, ItemStack,
-    IPayloadContext, IPayloadHandler, MenuClickedEvent, MenuClosedEvent, MenuReplace, NodeDefault,
+    IPayloadContext, IPayloadHandler, MenuClickedEvent, MenuClosedEvent, MenuReplace, ModServiceCallEvent, ModServiceError, NodeDefault,
     PayloadBytes, PayloadHandleError, PayloadId, PermissionGatherNodesEvent, PermissionLevel,
     PermissionNode, PermissionValueType, PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
     RegisterCommandsEvent, Registrar, RegistrationContext, ResourcePackStatusEvent,
@@ -292,6 +292,24 @@ fn apply(host: &mut dyn ServerHost, player: u128, property: Option<&Property>, r
     }
 }
 
+/// `SkinApplyEvent` for the mods that subscribed through the `skinsrestorer:api` service: None cancels.
+fn fire_skin_apply(host: &mut dyn ServerHost, player: u128, mut property: Option<Property>) -> Option<Option<Property>> {
+    use crate::horizon_skinsrestorer_core::api::{apply_event, parse_verdict, Verdict};
+    for id in core::api_subscribers() {
+        let line = apply_event(player, property.as_ref());
+        match host.commands().call_mod_service(&format!("{id}:skinsrestorer_event"), line.as_bytes()) {
+            Ok(reply) => match parse_verdict(&String::from_utf8_lossy(&reply)) {
+                Verdict::Cancel => return None,
+                Verdict::Set(p) => property = p,
+                Verdict::Keep => {}
+            },
+            Err(ModServiceError::ProviderNotLoaded) => core::api_unsubscribe(&id),
+            Err(_) => {}
+        }
+    }
+    Some(property)
+}
+
 /// `server.sound`, to the player alone.
 fn play_sound(host: &mut dyn ServerHost, player: u128, sound: &Sound) {
     let Some(source) = sound_source(&sound.category) else {
@@ -412,7 +430,12 @@ fn apply_actions(host: &mut dyn ServerHost, actions: Vec<Action>) {
                 player,
                 property,
                 refresh,
-            } => apply(host, player, property.as_ref(), &refresh),
+            } => {
+                // `SkinApplyEvent`: subscribers may cancel the apply or replace the property.
+                if let Some(property) = fire_skin_apply(host, player, property) {
+                    apply(host, player, property.as_ref(), &refresh);
+                }
+            }
             Action::OpenMenu {
                 player,
                 rows,
@@ -504,6 +527,15 @@ impl Hooks for Mod {
         for name in ["skinsrestorer.admin", "skinsrestorer.admincommand.*"] {
             let _ = event.nodes.add_with_children(admin_node(name), staff.clone(), &admin);
         }
+    }
+
+    /// The services other mods call: `skinsrestorer:api` (`horizon_skinsrestorer_core::api`).
+    fn mod_service_call(&self, _: &mut dyn ServerHost, event: &mut ModServiceCallEvent<'_>) -> Option<PayloadBytes> {
+        if event.service != "skinsrestorer:api" {
+            return None;
+        }
+        let text = std::str::from_utf8(&event.payload.0).ok()?;
+        Some(PayloadBytes(core::api_call(text).into_bytes()))
     }
 
     fn server_about_to_start(&self, _: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
