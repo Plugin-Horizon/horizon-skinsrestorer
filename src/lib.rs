@@ -9,10 +9,10 @@
 //!   players and the console. The nodes of the original's permission registry are declared at gathering
 //!   (`DECLARED_NODES`, with Bukkit's defaults); `/sr` checks its admin nodes (`ADMIN_NODES`) with `permission_bool`.
 //! - The skins menu: `menu_clicked`, `menu_closed` and `host.open_menu` / `host.close_menu`. Items have
-//!   no names or lore (HMOD-GAP(item-display)); head textures and the glint are still missing.
-//! - Skin changes: `server_tick` drains the core's actions. Writing the profile textures and refreshing
-//!   the player have no API on main (HMOD-GAP(profile-write), HMOD-GAP(player-refresh)), so no skin is
-//!   applied. A reset to the default skin is still missing.
+//!   are built from SNBT with name, lore and head texture.
+//! - Skin changes: `server_tick` drains the core's actions: the profile `textures` are set (or removed for a
+//!   reset), then `player_apply_skin` shows the skin to everyone, the player included; the vehicle is kept
+//!   through the refresh when `remountPlayerOnSkinUpdate` is on.
 //! - The proxy's plugin messages: `sr:messagechannel` is a raw play channel (`play_raw`, arismoko #3209);
 //!   skin updates arrive through its handler and the ack goes out with `player.send_payload`.
 
@@ -35,8 +35,7 @@ use mod_api::{
 const PROXY_CHANNEL: &str = "sr:messagechannel";
 
 /// The admin nodes of `/sr` (the core's `Sub::nodes`, and the Tab filter). Each is a typed Boolean node declared
-/// at gathering with the operator level 2 as its default. The old `skinsrestorer.admincommand.*` wildcard is not
-/// queried: a node name cannot contain `*`, so only the exact nodes are asked.
+/// at gathering with the operator level 2 as its default. The wildcards are declared nodes whose children are the group.
 const ADMIN_NODES: [&str; 4] = [
     "skinsrestorer.admincommand",
     "skinsrestorer.admin",
@@ -46,8 +45,7 @@ const ADMIN_NODES: [&str; 4] = [
 
 /// Every node of the original's `PermissionRegistry` plus its two groups (`skinsrestorer.player` and `skinsrestorer.admin`),
 /// with the default Bukkit gives them: the children of the player group are true for everyone (level 0), all others
-/// are operator-only (level 2). The groups' wildcards (`skinsrestorer.command.*`, `skinsrestorer.admincommand.*`) cannot be
-/// node names here; a permission plugin that grants a wildcard still needs to grant the nodes below.
+/// are operator-only (level 2). The groups and their wildcards are declared separately with their children.
 const DECLARED_NODES: &[(&str, u8)] = &[
     ("skinsrestorer.player", 0),
     ("skinsrestorer.admin", 2),
@@ -86,6 +84,45 @@ const DECLARED_NODES: &[(&str, u8)] = &[
     ("skinsrestorer.bypasscooldown", 2),
     ("skinsrestorer.bypassdisabled", 2),
     ("skinsrestorer.ownskin", 2),
+];
+
+/// `PermissionGroup.PLAYER`'s nodes.
+const PLAYER_GROUP: [&str; 11] = [
+    "skinsrestorer.command",
+    "skinsrestorer.command.set",
+    "skinsrestorer.command.set.url",
+    "skinsrestorer.command.clear",
+    "skinsrestorer.command.undo",
+    "skinsrestorer.command.favourite",
+    "skinsrestorer.command.random",
+    "skinsrestorer.command.update",
+    "skinsrestorer.command.search",
+    "skinsrestorer.command.edit",
+    "skinsrestorer.command.gui",
+];
+
+/// `PermissionGroup.ADMIN`'s own nodes (the player group is added as a parent).
+const ADMIN_GROUP: [&str; 20] = [
+    "skinsrestorer.admincommand",
+    "skinsrestorer.command.set.other",
+    "skinsrestorer.command.clear.other",
+    "skinsrestorer.command.undo.other",
+    "skinsrestorer.command.favourite.other",
+    "skinsrestorer.command.random.other",
+    "skinsrestorer.command.update.other",
+    "skinsrestorer.admincommand.status",
+    "skinsrestorer.admincommand.drop",
+    "skinsrestorer.admincommand.info",
+    "skinsrestorer.admincommand.applyskin",
+    "skinsrestorer.admincommand.createcustom",
+    "skinsrestorer.admincommand.skull.get",
+    "skinsrestorer.admincommand.skull.get.other",
+    "skinsrestorer.admincommand.skull.get.url",
+    "skinsrestorer.admincommand.skull.random",
+    "skinsrestorer.admincommand.skull.random.other",
+    "skinsrestorer.bypasscooldown",
+    "skinsrestorer.bypassdisabled",
+    "skinsrestorer.admincommand.reload",
 ];
 
 /// The typed node for one admin node name.
@@ -206,44 +243,24 @@ fn sound_source(category: &str) -> Option<SoundSource> {
     })
 }
 
-/// Puts `property` into the player's profile, so that every list entry and the player's own client carry
-/// it. A reset to the default skin (None) has no API on arismoko: it answers false and the action stops
-/// here, so the skin stays as it was.
-// TODO(arismoko-api: player_clear_profile_property): a None property (no textures) cannot be written;
-// the reset to the default skin is skipped.
-// HMOD-GAP(profile-write): main has no setter for a player's profile properties (`textures`). Every skin
-// change is refused here, so no skin is applied at all; the core's actions still run without it.
+/// Puts `property` into the player's profile (`player_set_profile_property`); no skin (reset to the default
+/// skin) drops the mod's own `textures` again (`player_remove_profile_property`).
 fn set_profile_textures(host: &mut dyn ServerHost, player: u128, property: Option<&Property>) -> bool {
     let Some(p) = host.player(player) else {
         return false;
     };
-    // Needs `PlayerRef::set_profile_property` (host `player_set_profile_property`: arismoko/horizon #17923,
-    // merged upstream, not in the pinned SDK yet).
-    #[cfg(feature = "horizon_profile_api")]
-    {
-        return match property {
-            Some(prop) => p.set_profile_property(host, "textures", &prop.value, prop.signature.as_deref()),
-            // A reset to the default skin has no clear call: an empty value shows the default skin.
-            None => p.set_profile_property(host, "textures", "", None),
-        };
-    }
-    #[cfg(not(feature = "horizon_profile_api"))]
-    {
-        let _ = (p, property);
-        false
+    match property {
+        Some(prop) => p.set_profile_property(host, "textures", &prop.value, prop.signature.as_deref()),
+        None => p.remove_profile_property(host, "textures"),
     }
 }
 
-/// Shows the player's changed skin to everyone who sees them (`player_refresh`: hidden and shown again
-/// over two ticks). Their own view keeps the old skin until they change level or join again.
-// HMOD-GAP(player-refresh): main has no per-player tracker refresh; the new skin is not shown to others.
+/// Shows the player's changed skin to everyone, themselves included (`player_apply_skin`: the others get
+/// the player again, the player's own client its own list entry again).
 fn refresh_player(host: &mut dyn ServerHost, player: u128) {
-    #[cfg(feature = "horizon_profile_api")]
     if let Some(p) = host.player(player) {
-        let _ = p.refresh(host);
+        let _ = p.apply_skin(host);
     }
-    #[cfg(not(feature = "horizon_profile_api"))]
-    let _ = (host, player);
 }
 
 /// One skin change, as the core decided it (`server.*OnSkinUpdate`, `server.sound`). Same order as the
@@ -256,15 +273,20 @@ fn apply(host: &mut dyn ServerHost, player: u128, property: Option<&Property>, r
         return;
     }
     let entity = p.entity();
-    // TODO(arismoko-api: dismount): entity_stop_riding covers the dismount without a remount; the
-    // remount (keeping the vehicle through the refresh) has no API yet.
-    if refresh.dismount && !refresh.remount {
+    // `remountPlayerOnSkinUpdate`: the player is put back on the vehicle after the refresh.
+    let vehicle = if refresh.dismount { entity.vehicle(&*host) } else { None };
+    if refresh.dismount {
         let _ = entity.stop_riding(host);
     }
     if refresh.dismount_passengers {
         let _ = entity.eject_passengers(host);
     }
     refresh_player(host, player);
+    if refresh.remount {
+        if let Some(vehicle) = vehicle {
+            let _ = entity.start_riding(host, vehicle, false);
+        }
+    }
     if let Some(sound) = &refresh.sound {
         play_sound(host, player, sound);
     }
@@ -461,10 +483,26 @@ impl Hooks for Mod {
     /// Declares the nodes of the original's permission registry, each with its Bukkit default (`DECLARED_NODES`).
     fn permission_gather_nodes(&self, event: &mut PermissionGatherNodesEvent<'_>) {
         for &(name, level) in DECLARED_NODES {
+            if name == "skinsrestorer.player" || name == "skinsrestorer.admin" {
+                continue;
+            }
             let _ = event.nodes.add(
                 admin_node(name),
                 NodeDefault::Level(PermissionLevel::from_level(i32::from(level))),
             );
+        }
+        // The original's two groups (`PermissionGroup`): a base node and a wildcard node that both grant the
+        // group's nodes; the admin group also holds the player group.
+        let player: Vec<PermissionNode> = PLAYER_GROUP.iter().map(|n| admin_node(n)).collect();
+        let mut admin: Vec<PermissionNode> = ADMIN_GROUP.iter().map(|n| admin_node(n)).collect();
+        admin.push(admin_node("skinsrestorer.player"));
+        let user = NodeDefault::Level(PermissionLevel::from_level(0));
+        let staff = NodeDefault::Level(PermissionLevel::from_level(2));
+        for name in ["skinsrestorer.player", "skinsrestorer.command.*"] {
+            let _ = event.nodes.add_with_children(admin_node(name), user.clone(), &player);
+        }
+        for name in ["skinsrestorer.admin", "skinsrestorer.admincommand.*"] {
+            let _ = event.nodes.add_with_children(admin_node(name), staff.clone(), &admin);
         }
     }
 
@@ -598,8 +636,7 @@ impl Hooks for Mod {
 
     fn player_logged_in(&self, host: &mut dyn ServerHost, event: &mut PlayerLoggedInEvent<'_>) {
         // The core only answers messages (ack, menu, skull) of a player it knows. The forwarded textures
-        // come from the profile. A replacement the join lookup returns is written below only with the
-        // feature `horizon_profile_api` (HMOD-GAP(profile-write) until the pinned SDK has upstream #17923).
+        // come from the profile. A replacement the join lookup returns is written below.
         let forwarded = host
             .player(event.player)
             .and_then(|p| p.profile(&*host))
@@ -611,12 +648,9 @@ impl Hooks for Mod {
             })
             .map(|prop| Property::new(prop.value, prop.signature));
         let replacement = core::joining(event.player, event.name, forwarded);
-        #[cfg(feature = "horizon_profile_api")]
         if let Some(property) = replacement {
             set_profile_textures(host, event.player, property.as_ref());
         }
-        #[cfg(not(feature = "horizon_profile_api"))]
-        let _ = replacement;
     }
 
     fn player_logged_out(&self, _: &mut dyn ServerHost, event: &mut PlayerLoggedOutEvent<'_>) {
@@ -650,6 +684,14 @@ impl Hooks for Mod {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn group_nodes_are_declared() {
+        for n in PLAYER_GROUP.iter().chain(ADMIN_GROUP.iter()) {
+            assert!(DECLARED_NODES.iter().any(|(d, _)| d == n), "{n}");
+        }
+        assert_eq!(PLAYER_GROUP.len(), 11);
+    }
 
     #[test]
     fn texts_become_snbt_compounds() {

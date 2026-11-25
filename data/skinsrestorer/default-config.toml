@@ -152,6 +152,8 @@ alwaysApplyPremium = false
 enabled = true
 
 [messages]
+locale = "en"
+consoleLocale = "en"
 disablePrefix = false
 perIssuerLocale = true
 dateFormat = "dd MMMM yyyy"

@@ -54,10 +54,19 @@ pub struct OfflineModeWarning {
     pub enabled: bool,
 }
 
+fn english() -> String {
+    "en".to_string()
+}
+
 /// `messages.*` of the original. The port's own messages are English and fixed (no locale files yet).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Messages {
+    /// `messages.locale` / `messages.consoleLocale` (default `en`): read; the backend prints no localized text.
+    #[serde(default = "english")]
+    pub locale: String,
+    #[serde(default = "english")]
+    pub console_locale: String,
     pub disable_prefix: bool,
     pub per_issuer_locale: bool,
     pub date_format: String,
@@ -526,6 +535,8 @@ database:
         assert!(c.login.offline_mode_warning.enabled);
         assert_eq!(c.messages.date_format, "dd MMMM yyyy");
         assert!(c.messages.per_issuer_locale);
+        assert_eq!(c.messages.locale, "en");
+        assert_eq!(c.messages.console_locale, "en");
         assert!(c.commands.force_default_permissions);
         assert_eq!(c.commands.skin_change_cooldown, 30);
         assert_eq!(c.commands.skin_error_cooldown, 5);
