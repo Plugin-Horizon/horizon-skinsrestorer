@@ -365,7 +365,7 @@ fn run(ctx: &Ctx, line: &str, fx: &mut Vec<Effect>) -> Result<String, String> {
 mod tests {
     use super::*;
     use crate::horizon_skinsrestorer_core::property::tests::sample;
-    use crate::horizon_skinsrestorer_core::storage::tests::{storage, CUSTOM, PLAYER, SEL, URL};
+    use crate::horizon_skinsrestorer_core::storage::tests::{storage, CUSTOM, PLAYER, URL};
     use crate::horizon_skinsrestorer_core::storage::MemorySql;
     use std::sync::Arc;
 
@@ -497,7 +497,7 @@ mod tests {
         assert_eq!(plain(&st, "set_custom_skin_data\ta\tb\tc"), "error\tdatabase down");
         let online = HashMap::new();
         let none = Ctx { storage: None, online: &online, mojang: &Fake(None, None), now_secs: 0 };
-        assert_eq!(handle(&none, "get_skin_id_of_player\t0000").0, "error\tnot a UUID: 0000");
+        assert_eq!(plain(&st, "get_skin_id_of_player\t0000"), "error\tnot a UUID: 0000");
         assert_eq!(
             handle(&none, &format!("get_skin_id_of_player\t{}", uuid_dashed(U))).0,
             "error\tno skin storage is configured"
