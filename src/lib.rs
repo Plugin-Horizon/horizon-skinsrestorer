@@ -17,6 +17,7 @@
 //!   skin updates arrive through its handler and the ack goes out with `player.send_payload`.
 
 pub mod horizon_skinsrestorer_core;
+mod cmdkit;
 use crate::horizon_skinsrestorer_core::gui::MenuItem;
 use crate::horizon_skinsrestorer_core::property::Property;
 use crate::horizon_skinsrestorer_core::sound::Sound;
@@ -501,6 +502,7 @@ impl Hooks for Mod {
         payloads
             .registrar("1")
             .play_raw(PayloadId(PROXY_CHANNEL.into()), Some(std::sync::Arc::new(ProxyInbox)));
+        cmdkit::register(registrar);
     }
 
     /// Declares the nodes of the original's permission registry, each with its Bukkit default (`DECLARED_NODES`).
@@ -548,13 +550,15 @@ impl Hooks for Mod {
     fn register_commands(&self, _: &mut dyn ServerHost, event: &mut RegisterCommandsEvent<'_>) {
         // SRProxyCommand: `/sr` and `/skinsrestorer`, each with `help [query]`, `status`, `dump`. Level 0,
         // as the permission nodes differ per subcommand; run_mod_command checks them.
+        // `help [query]` completes the syntaxes the sender may run (`tab_complete`), so the query is a registered text.
         for root in ["sr", "skinsrestorer"] {
             event.commands.push(Command::new(root));
-            for tail in ["help [query:text]", "status", "dump"] {
-                event.commands.push(Command::new(&format!("{root} {tail}")));
+            for tail in COMMAND_TAILS {
+                event.commands.push(Command::new(&cmdkit::ask(&format!("{root} {tail}"), "skinsrestorer")));
             }
         }
     }
+
 
     /// Tab: `/sr` and `/skinsrestorer` are listed only for a sender with one of the admin nodes of
     /// `core::Sub::nodes` (the same nodes `run_mod_command` checks; the console is not a player here).
@@ -598,9 +602,9 @@ impl Hooks for Mod {
             }
         };
         let mut line = event.command.literals[1..].join(" ");
-        if let Some(CommandArgumentValue::String(query)) = event.command.argument("query") {
+        if let Some(query) = event.command.argument("query").and_then(cmdkit::value_text) {
             line.push(' ');
-            line.push_str(query);
+            line.push_str(&query);
         }
         // Admin nodes (skinsrestorer.admin*) are the permission provider's answer, or the operator level 2
         // without one. Other nodes are open to everyone; the console has every node. The typed queries need
@@ -710,6 +714,24 @@ impl Hooks for Mod {
     ) {
         // server.resourcePackFix: a pack that finished loading shows the skin again (through the core).
         core::resource_pack_status(event.player, event.status);
+    }
+}
+
+/// The sub commands of `/sr` (`SRProxyCommand`: `help [query]`, `status`, `dump`).
+const COMMAND_TAILS: [&str; 3] = ["help [query:text]", "status", "dump"];
+
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+
+    #[test]
+    fn the_sub_commands_of_the_original_are_in_the_tree() {
+        let usages: Vec<String> = COMMAND_TAILS.iter().map(|t| format!("sr {t}")).collect();
+        let paths = cmdkit::literal_paths(&usages);
+        for sub in ["help", "status", "dump"] {
+            assert!(paths.contains(&format!("sr {sub}")), "sr {sub}");
+        }
+        assert_eq!(cmdkit::ask("sr help [query:text]", "skinsrestorer"), "sr help [query:skinsrestorer:text]");
     }
 }
 
