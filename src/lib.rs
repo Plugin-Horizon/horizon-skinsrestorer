@@ -650,7 +650,8 @@ impl Hooks for Mod {
             }
         }
         let allowed = |node: &str| !node.starts_with("skinsrestorer.admin") || granted.iter().any(|g| *g == node);
-        let start = event.command.rfind(' ').map_or(0, |i| i + 1);
+        // The query is the rest of the line (a syntax such as `sr dump` has a space of its own).
+        let start = event.command.find(' ').and_then(|i| event.command[i + 1..].find(' ').map(|j| i + 1 + j + 1)).unwrap_or(0);
         let end = event.command.len();
         for name in core::help_suggestions(&allowed) {
             event.suggestions.push(Suggestion::new((start, end), name));

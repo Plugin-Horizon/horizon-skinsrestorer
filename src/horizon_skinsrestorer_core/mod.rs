@@ -762,15 +762,17 @@ fn invalid_syntax(correct: &str) -> String {
     format!("\u{a7}cInvalid Command Syntax. Correct command syntax is: \u{a7}7{correct}")
 }
 
-/// The commands `/sr help` lists: the ones with a description (`Message.HELP_*`).
+/// The commands `/sr help` lists (cloud's `commandFilter`: those with a description), as the syntax cloud
+/// prints them, sorted: the sub-command each stands for.
 const HELP: [(&str, &str); 3] = [
-    ("/sr help [query]", "Admin commands for SkinsRestorer."),
-    ("/sr status", "Checks the API services that SkinsRestorer uses."),
-    ("/sr dump", "Uploads support data to bytebin.lucko.me."),
+    ("sr dump", "dump"),
+    ("sr help [query]", "help"),
+    ("sr status", "status"),
 ];
 
-/// `MinecraftHelp` output of the original's cloud help, as a list: the guess is the layout, not
-/// the text (cloud's own wording is not in the SkinsRestorer repository).
+/// Cloud's `MinecraftHelp` width: the header and the footer are 46 characters.
+const HELP_WIDTH: usize = 46;
+
 fn help_lines(query: &str) -> Vec<String> {
     help_lines_for(query, &|_| true)
 }
@@ -778,23 +780,35 @@ fn help_lines(query: &str) -> Vec<String> {
 /// The sub-command each `HELP` entry stands for.
 fn help_sub(syntax: &str) -> Sub {
     match syntax {
-        "/sr status" => Sub::Status,
-        "/sr dump" => Sub::Dump,
+        "sr status" => Sub::Status,
+        "sr dump" => Sub::Dump,
         _ => Sub::Help(String::new()),
     }
 }
 
-/// `help_lines`, listing only the entries `visible` lets through (the original's `queryCommands(.., sender)`
-/// hides the commands a sender may not run).
+/// `MinecraftHelp.queryCommands` of the original's cloud help (`CommandHelpService`), listing only the entries
+/// `visible` lets through (the original's `queryCommands(.., sender)` hides what a sender may not run). The
+/// layout is the one Paper prints for `/sr`:
+/// `----------------- Help (1/1) -----------------`, `Showing search results for query: "/"`,
+/// `└─ Available Commands:`, one `├─ /sr dump` per command (`└─` on the last) and a closing rule.
 pub fn help_lines_for(query: &str, visible: &dyn Fn(&Sub) -> bool) -> Vec<String> {
     let q = query.trim().to_ascii_lowercase();
-    let mut out = vec![format!("\u{a7}6Help Menu: \u{a7}7/sr help {q}").trim_end().to_owned()];
-    for (syntax, description) in HELP {
-        let plain = syntax.trim_start_matches('/').to_ascii_lowercase();
-        if visible(&help_sub(syntax)) && (q.is_empty() || plain.contains(&q)) {
-            out.push(format!("\u{a7}e{syntax} \u{a7}7- {description}"));
-        }
+    let title = " Help (1/1) ";
+    let side = HELP_WIDTH.saturating_sub(title.len()) / 2;
+    let rule = "-".repeat(side);
+    let mut out = vec![format!("\u{a7}8{rule}\u{a7}6{title}\u{a7}8{rule}")];
+    out.push(format!("\u{a7}7Showing search results for query: \u{a7}6\"/{q}\""));
+    out.push("\u{a7}8\u{2514}\u{2500} \u{a7}7Available Commands:".to_owned());
+    let shown: Vec<&str> = HELP
+        .iter()
+        .map(|(syntax, _)| *syntax)
+        .filter(|syntax| visible(&help_sub(syntax)) && (q.is_empty() || syntax.contains(&q)))
+        .collect();
+    for (i, syntax) in shown.iter().enumerate() {
+        let branch = if i + 1 == shown.len() { "\u{2514}\u{2500}" } else { "\u{251c}\u{2500}" };
+        out.push(format!("\u{a7}8{branch} \u{a7}e/{syntax}"));
     }
+    out.push(format!("\u{a7}8{}", "-".repeat(HELP_WIDTH)));
     out
 }
 
@@ -986,10 +1000,13 @@ pub fn nodes(args: &str) -> &'static [&'static str] {
 /// The completions of `/sr help <query>`: the syntaxes of the commands the sender may run
 /// (`CommandHelpService.suggestHelpQueries`).
 pub fn help_suggestions(allowed: &dyn Fn(&str) -> bool) -> Vec<String> {
-    HELP.iter()
-        .filter(|(syntax, _)| help_sub(syntax).nodes().iter().any(|n| allowed(n)))
-        .map(|(syntax, _)| syntax.trim_start_matches("/sr ").to_owned())
-        .collect()
+    // `queryRootIndex` lists the root command itself and its sub commands, sorted: `sr`, `sr dump`, ...
+    let mut out = Vec::new();
+    if Sub::Root.nodes().iter().any(|n| allowed(n)) {
+        out.push("sr".to_owned());
+    }
+    out.extend(HELP.iter().filter(|(syntax, _)| help_sub(syntax).nodes().iter().any(|n| allowed(n))).map(|(syntax, _)| (*syntax).to_owned()));
+    out
 }
 
 /// `%skinsrestorer_<params>%` for an online player (None: not a SkinsRestorer placeholder).
