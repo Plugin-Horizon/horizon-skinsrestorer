@@ -597,3 +597,25 @@ mod mineskin_tests {
         assert_eq!(sanitize_image_url("not a url"), "not a url");
     }
 }
+
+#[cfg(test)]
+mod network_tests {
+    use super::*;
+
+    /// Live probe (run with `--include-ignored`): the mod's own HTTPS path reaches Mojang and the session server.
+    #[test]
+    #[ignore = "network"]
+    fn mojang_lookups_work_over_https() {
+        let cfg = Config::default();
+        let r = get("https://api.mojang.com/users/profiles/minecraft/Notch", &cfg).expect("api.mojang.com");
+        assert_eq!(r.code, 200, "{}", r.body);
+        let r = get(
+            "https://sessionserver.mojang.com/session/minecraft/profile/069a79f444e94726a5befca90e38aaf5?unsigned=false",
+            &cfg,
+        )
+        .expect("sessionserver");
+        assert_eq!(r.code, 200, "{}", r.body);
+        let p = mojang_profile("Notch", &cfg).expect("profile");
+        assert!(p.is_some());
+    }
+}
