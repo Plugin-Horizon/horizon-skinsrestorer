@@ -83,6 +83,7 @@ pub struct Listed {
     pub list: Vec<String>,
     /// The `gui.*.index` of the original: the menu slot order of the GUI's tabs (0 when a list has none).
     #[serde(default)]
+    #[serde(deserialize_with = "lenient")]
     pub index: i64,
     #[serde(default)]
     pub only_show_list: bool,
@@ -112,11 +113,17 @@ pub struct Gui {
 #[serde(rename_all = "camelCase")]
 pub struct Commands {
     pub force_default_permissions: bool,
+    #[serde(deserialize_with = "lenient")]
     pub skin_change_cooldown: i64,
+    #[serde(deserialize_with = "lenient")]
     pub skull_get_cooldown: i64,
+    #[serde(deserialize_with = "lenient")]
     pub skin_error_cooldown: i64,
+    #[serde(deserialize_with = "lenient")]
     pub skull_error_cooldown: i64,
+    #[serde(deserialize_with = "lenient")]
     pub max_history_length: i64,
+    #[serde(deserialize_with = "lenient")]
     pub max_favourite_length: i64,
     pub disable_skin_command: bool,
     pub disable_skull_command: bool,
@@ -139,7 +146,9 @@ pub struct CustomHelp {
 #[serde(rename_all = "camelCase")]
 pub struct StorageConfig {
     pub disallow_auto_update_skin: bool,
+    #[serde(deserialize_with = "lenient")]
     pub skin_expires_after: i64,
+    #[serde(deserialize_with = "lenient")]
     pub uuid_expires_after: i64,
     pub default_skins: Listed,
 }
@@ -227,6 +236,7 @@ pub struct Api {
     /// serialized, never printed (`Debug` shows `<hidden>`), never in the dump.
     #[serde(rename = "mineskinAPIKey", skip_serializing)]
     pub mineskin_api_key: Secret,
+    #[serde(deserialize_with = "lenient")]
     pub mojang_batch_window_seconds: u64,
     /// The recommended skins are loaded from `plugins/SkinsRestorer/recommendations.json` only when this is on.
     pub fetch_recommended_skins: bool,
@@ -241,8 +251,11 @@ pub struct Dev {
 #[serde(rename_all = "camelCase")]
 pub struct Horizon {
     pub join_lookup: String,
+    #[serde(deserialize_with = "lenient")]
     pub join_timeout_ms: u64,
+    #[serde(deserialize_with = "lenient")]
     pub poll_seconds: u64,
+    #[serde(deserialize_with = "lenient")]
     pub admin_level: u8,
     pub schema: Schema,
 }
@@ -398,6 +411,14 @@ fn node_to_toml(node: &Node) -> Option<toml::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numbers_written_as_quoted_strings_are_read_as_numbers() {
+        let yaml = "api:\n  mojangBatchWindowSeconds: \"1\"\nstorage:\n  skinExpiresAfter: \"20\"\ncommands:\n  skinChangeCooldown: \"5\"\n";
+        let c = Config::parse_layers(Some(yaml), "").unwrap();
+        assert_eq!(c.api.mojang_batch_window_seconds, 1);
+        assert_eq!(c.storage.skin_expires_after, 20);
+    }
 
     #[test]
     fn default_parses_with_the_originals_defaults() {
