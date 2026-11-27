@@ -488,6 +488,19 @@ fn apply_actions(host: &mut dyn ServerHost, actions: Vec<Action>) {
     }
 }
 
+/// Paper hides `/sr` from a player holding none of the admin nodes: typing it answers as for an unknown command.
+fn hidden_from(is_player: bool, holds_an_admin_node: bool) -> bool {
+    is_player && !holds_an_admin_node
+}
+
+/// The two lines of vanilla's unknown-command error for the typed line (the reason, then the line with the marker).
+fn unknown_command(typed: &str) -> [Text; 2] {
+    [
+        Text::translate("command.unknown.command", vec![]),
+        Text::literal(typed.trim_start_matches('/').to_owned()).append(Text::translate("command.context.here", vec![])),
+    ]
+}
+
 /// One line of a `/sr` answer, to the sender's feedback (the console's log for the console).
 fn reply(host: &mut dyn ServerHost, line: &str) {
     let text = plain(host, line);
@@ -618,6 +631,13 @@ impl Hooks for Mod {
                     }
                 }
             }
+            if hidden_from(player.is_some(), !granted.is_empty()) {
+                let typed = event.command.literals.join(" ");
+                for text in unknown_command(&typed) {
+                    let _ = host.commands().feedback(text);
+                }
+                return Flow::Cancel;
+            }
             let allowed = move |node: &str| {
                 !node.starts_with("skinsrestorer.admin")
                     || player.is_none()
@@ -739,6 +759,17 @@ mod tree_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_player_without_an_admin_node_gets_the_unknown_command_not_the_permission_line() {
+        // Paper (round 2 DIFF): `/sr` and `/skinsrestorer` without permission -> "command.unknown.command srcommand.context.here".
+        assert!(hidden_from(true, false));
+        assert!(!hidden_from(true, true));
+        assert!(!hidden_from(false, false), "the console is never hidden from");
+        let lines = unknown_command("/sr");
+        assert_eq!(format!("{:?}", lines[0]).contains("command.unknown.command"), true);
+        assert_eq!(format!("{:?}", lines[1]).contains("command.context.here"), true);
+    }
 
     #[test]
     fn group_nodes_are_declared() {
