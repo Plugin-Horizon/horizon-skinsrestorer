@@ -14,6 +14,7 @@
 //! - `/sr`, `/sr help`, `/sr status` and `/sr dump`, the commands a proxy-mode backend has.
 //!
 //! The engine glue (the bundle's helpers) turns [`Action`]s into packets.
+pub mod api;
 pub mod config;
 pub mod gui;
 pub mod jobs;
@@ -22,6 +23,7 @@ pub mod mariadb;
 #[cfg(feature = "net")]
 pub mod net;
 pub mod payload;
+pub mod placeholders;
 pub mod property;
 pub mod skins;
 pub mod sound;
@@ -104,6 +106,8 @@ struct PlayerState {
     had_selection: bool,
     /// A lookup is on its way.
     pending: bool,
+    /// The identifier of the selected skin at the last look (`%skinsrestorer_skin_name%`).
+    skin_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -136,6 +140,8 @@ pub struct Core {
     /// Lines from command threads, taken by the next tick.
     outbox: Arc<Mutex<Vec<Action>>>,
     menus: HashMap<u128, OpenMenu>,
+    /// Mods that listen to `SkinApplyEvent` (their service `<id>:skinsrestorer_event`).
+    pub subscribers: Vec<String>,
     pub stats: Stats,
 }
 
@@ -153,6 +159,7 @@ impl Core {
             queued: Vec::new(),
             outbox: Arc::new(Mutex::new(Vec::new())),
             menus: HashMap::new(),
+            subscribers: Vec::new(),
             stats: Stats::default(),
         }
     }
@@ -242,7 +249,8 @@ impl Core {
                     self.note_result(&result);
                     if let Ok(answer) = &result {
                         state.had_selection = matches!(answer.lookup, Lookup::Skin(..));
-                        if let Lookup::Skin(_, p) = &answer.lookup {
+                        if let Lookup::Skin(sel, p) = &answer.lookup {
+                            state.skin_id = Some(sel.identifier.clone());
                             if forwarded.as_ref().map(|f| &f.value) != Some(&p.value) {
                                 replace = Some(Some(p.clone()));
                                 state.shown = Some(p.clone());
@@ -464,6 +472,10 @@ impl Core {
         };
         let wanted = Self::wanted(&answer, st.had_selection);
         st.had_selection = matches!(answer.lookup, Lookup::Skin(..));
+        st.skin_id = match &answer.lookup {
+            Lookup::Skin(sel, _) => Some(sel.identifier.clone()),
+            _ => None,
+        };
         if let Some(p) = wanted {
             self.show(d.player, p);
         }
@@ -750,15 +762,17 @@ fn invalid_syntax(correct: &str) -> String {
     format!("\u{a7}cInvalid Command Syntax. Correct command syntax is: \u{a7}7{correct}")
 }
 
-/// The commands `/sr help` lists: the ones with a description (`Message.HELP_*`).
+/// The commands `/sr help` lists (cloud's `commandFilter`: those with a description), as the syntax cloud
+/// prints them, sorted: the sub-command each stands for.
 const HELP: [(&str, &str); 3] = [
-    ("/sr help [query]", "Admin commands for SkinsRestorer."),
-    ("/sr status", "Checks the API services that SkinsRestorer uses."),
-    ("/sr dump", "Uploads support data to bytebin.lucko.me."),
+    ("sr dump", "dump"),
+    ("sr help [query]", "help"),
+    ("sr status", "status"),
 ];
 
-/// `MinecraftHelp` output of the original's cloud help, as a list: the guess is the layout, not
-/// the text (cloud's own wording is not in the SkinsRestorer repository).
+/// Cloud's `MinecraftHelp` width: the header and the footer are 46 characters.
+const HELP_WIDTH: usize = 46;
+
 fn help_lines(query: &str) -> Vec<String> {
     help_lines_for(query, &|_| true)
 }
@@ -766,23 +780,35 @@ fn help_lines(query: &str) -> Vec<String> {
 /// The sub-command each `HELP` entry stands for.
 fn help_sub(syntax: &str) -> Sub {
     match syntax {
-        "/sr status" => Sub::Status,
-        "/sr dump" => Sub::Dump,
+        "sr status" => Sub::Status,
+        "sr dump" => Sub::Dump,
         _ => Sub::Help(String::new()),
     }
 }
 
-/// `help_lines`, listing only the entries `visible` lets through (the original's `queryCommands(.., sender)`
-/// hides the commands a sender may not run).
+/// `MinecraftHelp.queryCommands` of the original's cloud help (`CommandHelpService`), listing only the entries
+/// `visible` lets through (the original's `queryCommands(.., sender)` hides what a sender may not run). The
+/// layout is the one Paper prints for `/sr`:
+/// `----------------- Help (1/1) -----------------`, `Showing search results for query: "/"`,
+/// `└─ Available Commands:`, one `├─ /sr dump` per command (`└─` on the last) and a closing rule.
 pub fn help_lines_for(query: &str, visible: &dyn Fn(&Sub) -> bool) -> Vec<String> {
     let q = query.trim().to_ascii_lowercase();
-    let mut out = vec![format!("\u{a7}6Help Menu: \u{a7}7/sr help {q}").trim_end().to_owned()];
-    for (syntax, description) in HELP {
-        let plain = syntax.trim_start_matches('/').to_ascii_lowercase();
-        if visible(&help_sub(syntax)) && (q.is_empty() || plain.contains(&q)) {
-            out.push(format!("\u{a7}e{syntax} \u{a7}7- {description}"));
-        }
+    let title = " Help (1/1) ";
+    let side = HELP_WIDTH.saturating_sub(title.len()) / 2;
+    let rule = "-".repeat(side);
+    let mut out = vec![format!("\u{a7}8{rule}\u{a7}6{title}\u{a7}8{rule}")];
+    out.push(format!("\u{a7}7Showing search results for query: \u{a7}6\"/{q}\""));
+    out.push("\u{a7}8\u{2514}\u{2500} \u{a7}7Available Commands:".to_owned());
+    let shown: Vec<&str> = HELP
+        .iter()
+        .map(|(syntax, _)| *syntax)
+        .filter(|syntax| visible(&help_sub(syntax)) && (q.is_empty() || syntax.contains(&q)))
+        .collect();
+    for (i, syntax) in shown.iter().enumerate() {
+        let branch = if i + 1 == shown.len() { "\u{2514}\u{2500}" } else { "\u{251c}\u{2500}" };
+        out.push(format!("\u{a7}8{branch} \u{a7}e/{syntax}"));
     }
+    out.push(format!("\u{a7}8{}", "-".repeat(HELP_WIDTH)));
     out
 }
 
@@ -974,10 +1000,92 @@ pub fn nodes(args: &str) -> &'static [&'static str] {
 /// The completions of `/sr help <query>`: the syntaxes of the commands the sender may run
 /// (`CommandHelpService.suggestHelpQueries`).
 pub fn help_suggestions(allowed: &dyn Fn(&str) -> bool) -> Vec<String> {
-    HELP.iter()
-        .filter(|(syntax, _)| help_sub(syntax).nodes().iter().any(|n| allowed(n)))
-        .map(|(syntax, _)| syntax.trim_start_matches("/sr ").to_owned())
-        .collect()
+    // `queryRootIndex` lists the root command itself and its sub commands, sorted: `sr`, `sr dump`, ...
+    let mut out = Vec::new();
+    if Sub::Root.nodes().iter().any(|n| allowed(n)) {
+        out.push("sr".to_owned());
+    }
+    out.extend(HELP.iter().filter(|(syntax, _)| help_sub(syntax).nodes().iter().any(|n| allowed(n))).map(|(syntax, _)| (*syntax).to_owned()));
+    out
+}
+
+/// `%skinsrestorer_<params>%` for an online player (None: not a SkinsRestorer placeholder).
+pub fn placeholder(player: Option<u128>, params: &str) -> Option<String> {
+    with(|c| {
+        let st = player.and_then(|p| c.players.get(&p));
+        placeholders::request(
+            params,
+            st.and_then(|s| s.skin_id.as_deref()),
+            st.and_then(|s| s.shown.as_ref()),
+            st.map(|s| s.name.as_str()),
+        )
+    })
+}
+
+/// The lookups of the API against Mojang (feature `net`).
+struct NetMojang(Config);
+
+impl api::Mojang for NetMojang {
+    fn profile(&self, input: &str) -> Result<Option<(u128, String, Property)>, String> {
+        #[cfg(feature = "net")]
+        return net::mojang_profile(input, &self.0);
+        #[cfg(not(feature = "net"))]
+        {
+            let _ = input;
+            Err("built without the net feature".into())
+        }
+    }
+
+    fn generate(&self, url: &str, variant: Option<&str>) -> Result<(Property, String, String), String> {
+        #[cfg(feature = "net")]
+        return net::mineskin_generate(url, variant, &self.0, &net::MineSkinEnv::live())
+            .map(|g| (g.property, g.mine_skin_id, g.variant.to_owned()));
+        #[cfg(not(feature = "net"))]
+        {
+            let _ = (url, variant);
+            Err("built without the net feature".into())
+        }
+    }
+}
+
+/// One call of the `skinsrestorer:api` service (see [`api`]): the answer line. The lock is not held
+/// during storage and network work; the applies it asks for are queued for the next tick.
+pub fn api_call(line: &str) -> String {
+    let (storage, online, cfg) = with(|c| {
+        let online: HashMap<String, u128> = c.players.iter().map(|(u, s)| (s.name.to_ascii_lowercase(), *u)).collect();
+        (c.storage.clone(), online, c.cfg.clone())
+    });
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let ctx = api::Ctx { storage: storage.as_deref(), online: &online, mojang: &NetMojang(cfg), now_secs };
+    let (answer, effects) = api::handle(&ctx, line);
+    if !effects.is_empty() {
+        with(|c| {
+            for e in effects {
+                match e {
+                    api::Effect::Apply(player, property) => c.apply(player, property),
+                    api::Effect::Subscribe(id) => {
+                        if !c.subscribers.contains(&id) {
+                            c.subscribers.push(id);
+                        }
+                    }
+                    api::Effect::Unsubscribe(id) => c.subscribers.retain(|s| *s != id),
+                }
+            }
+        });
+    }
+    answer
+}
+
+/// The mods that listen to `SkinApplyEvent`.
+pub fn api_subscribers() -> Vec<String> {
+    with(|c| c.subscribers.clone())
+}
+
+/// A subscriber whose mod is not loaded any more.
+pub fn api_unsubscribe(id: &str) {
+    with(|c| c.subscribers.retain(|s| s != id))
 }
 
 pub fn admin_level() -> u8 {

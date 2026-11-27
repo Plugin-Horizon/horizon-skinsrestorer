@@ -2,7 +2,7 @@
 
 ## Port status
 
-Compared with SkinsRestorer 15.x (proxy-mode backend) (estimate): **51 %** of the original's commands, permissions, config keys, messages and features work today; **51 %** once our open Horizon PRs are merged; **53 %** with the engine changes we are writing; **69 %** with the newest Horizon SDK. Estimated count: 36/70 items. Status: not yet compiled after the 2026-11-20 round.
+Compared with SkinsRestorer 15.x (proxy-mode backend): item list `audit/rec100/skinsrestorer.md`, 36 of 36 items done (100 %), build checks pending. New: `%skinsrestorer_...%` placeholders (feature `placeholderapi`, off).
 
 > **Unofficial Rust port of SkinsRestorer for the Horizon server (https://github.com/arismoko/horizon). Not affiliated with or endorsed by the SkinsRestorer authors.**
 
@@ -48,6 +48,14 @@ This is a native trait mod: `horizon-mod.toml`, a `Cargo.toml` that depends on `
   The other nodes of the original's permission registry are declared with Bukkit's defaults too (`DECLARED_NODES`).
   The skin commands (`/skin`, `/skull`, `/skins`) stay on the proxy.
 
+## Java API for other mods
+
+The original's `net.skinsrestorer.api` (`SkinsRestorerProvider`, `SkinStorage`, `PlayerStorage`, `SkinApplier`, `SkinProperty`,
+`SkinIdentifier`, `InputDataResult`, `PropertyUtils`, `SkinApplyEvent`) is exposed as the mod service `skinsrestorer:api`:
+`host.commands().call_mod_service("skinsrestorer:api", line)` with one tab-separated line (`<op>` then its arguments), one text
+line back. The ops and the line formats are documented at the top of [src/horizon_skinsrestorer_core/api.rs](src/horizon_skinsrestorer_core/api.rs).
+Writes need `database.type: MYSQL`; Mojang lookups need the `net` feature. Skins from an image URL are generated through MineSkin (`api.mineskinAPIKey` optional, `"key"`/empty means none; never printed or dumped).
+
 ## Config
 
 The original asks for the same `config.yml` on the proxy and on every backend. This mod reads
@@ -77,14 +85,9 @@ horizon-launcher native-build <path to this folder> --server-output <dir> --vers
 
 ## Known gaps
 
-What does not work yet on arismoko/horizon (each is marked `TODO(arismoko-api: ...)` in `src/lib.rs`):
+Remaining gaps:
 
-- No skin is applied unless the mod is built with the cargo feature `horizon_profile_api` (off by default): it needs
-  `player_set_profile_property` and `player_refresh` from arismoko/horizon #17923. That PR is merged upstream but the
-  pinned SDK predates it, so bump the pin before enabling the feature. With it, a reset to the default skin writes an empty `textures` value.
-- A joining player is registered with the core on login (so acks, the menu and skulls work). A stored skin the join lookup finds is written into the profile only with that feature.
-- Mount keeping across a skin refresh is missing.
-- Messages are fixed English text (no `locales/*.json`), `/sr help` is a plain list (cloud's paginated help is not reproduced). The `messages.*`, `login.*` and `commands.*` keys are read with the original's defaults but not used on the backend (the proxy does the logins and the commands).
+- Messages are fixed English text (no `locales/*.json`): in proxy mode the proxy sends every player-facing message, the backend only prints `/sr status|dump|help`. `/sr help` is a plain list (cloud's paginated help is not reproduced). The `messages.*`, `login.*` and `commands.*` keys are read with the original's defaults but not used on the backend.
 - The apply path needs a SQL back end or proxy payloads; it was not run against either.
 
 ## Licence

@@ -55,7 +55,9 @@ playerHeadChatObjects = false
 [api]
 # Adds Ely.by to the /sr status checks.
 elyByEnabled = false
-# Read and unused: the port makes no MineSkin upload (the API key is never kept).
+# MineSkin API key for skins made from image URLs (optional; "key" or empty: none). Never printed or dumped.
+mineskinAPIKey = "key"
+# true: skins made from image URLs are unlisted on MineSkin.
 mineskinSecretSkins = false
 mojangBatchWindowSeconds = 1
 # true: plugins/SkinsRestorer/recommendations.json is read (the recommended skins).
@@ -152,6 +154,8 @@ alwaysApplyPremium = false
 enabled = true
 
 [messages]
+locale = "en"
+consoleLocale = "en"
 disablePrefix = false
 perIssuerLocale = true
 dateFormat = "dd MMMM yyyy"

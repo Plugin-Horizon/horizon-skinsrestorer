@@ -54,10 +54,19 @@ pub struct OfflineModeWarning {
     pub enabled: bool,
 }
 
+fn english() -> String {
+    "en".to_string()
+}
+
 /// `messages.*` of the original. The port's own messages are English and fixed (no locale files yet).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Messages {
+    /// `messages.locale` / `messages.consoleLocale` (default `en`): read; the backend prints no localized text.
+    #[serde(default = "english")]
+    pub locale: String,
+    #[serde(default = "english")]
+    pub console_locale: String,
     pub disable_prefix: bool,
     pub per_issuer_locale: bool,
     pub date_format: String,
@@ -74,6 +83,7 @@ pub struct Listed {
     pub list: Vec<String>,
     /// The `gui.*.index` of the original: the menu slot order of the GUI's tabs (0 when a list has none).
     #[serde(default)]
+    #[serde(deserialize_with = "lenient")]
     pub index: i64,
     #[serde(default)]
     pub only_show_list: bool,
@@ -103,11 +113,17 @@ pub struct Gui {
 #[serde(rename_all = "camelCase")]
 pub struct Commands {
     pub force_default_permissions: bool,
+    #[serde(deserialize_with = "lenient")]
     pub skin_change_cooldown: i64,
+    #[serde(deserialize_with = "lenient")]
     pub skull_get_cooldown: i64,
+    #[serde(deserialize_with = "lenient")]
     pub skin_error_cooldown: i64,
+    #[serde(deserialize_with = "lenient")]
     pub skull_error_cooldown: i64,
+    #[serde(deserialize_with = "lenient")]
     pub max_history_length: i64,
+    #[serde(deserialize_with = "lenient")]
     pub max_favourite_length: i64,
     pub disable_skin_command: bool,
     pub disable_skull_command: bool,
@@ -130,7 +146,9 @@ pub struct CustomHelp {
 #[serde(rename_all = "camelCase")]
 pub struct StorageConfig {
     pub disallow_auto_update_skin: bool,
+    #[serde(deserialize_with = "lenient")]
     pub skin_expires_after: i64,
+    #[serde(deserialize_with = "lenient")]
     pub uuid_expires_after: i64,
     pub default_skins: Listed,
 }
@@ -191,12 +209,34 @@ pub struct Advanced {
     pub player_head_chat_objects: bool,
 }
 
+/// A value that is never printed.
+#[derive(Clone, Default, Deserialize)]
+#[serde(transparent)]
+pub struct Secret(String);
+
+impl Secret {
+    pub fn get(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("<hidden>")
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Api {
     pub ely_by_enabled: bool,
-    /// `api.mineskinSecretSkins`: the port makes no MineSkin upload, so it is read and unused.
+    /// `api.mineskinSecretSkins`: generated skins are `unlisted` instead of `public` on MineSkin.
     pub mineskin_secret_skins: bool,
+    /// `api.mineskinAPIKey` (`""` and `"key"` mean no key). Kept for the MineSkin client only: never
+    /// serialized, never printed (`Debug` shows `<hidden>`), never in the dump.
+    #[serde(rename = "mineskinAPIKey", skip_serializing)]
+    pub mineskin_api_key: Secret,
+    #[serde(deserialize_with = "lenient")]
     pub mojang_batch_window_seconds: u64,
     /// The recommended skins are loaded from `plugins/SkinsRestorer/recommendations.json` only when this is on.
     pub fetch_recommended_skins: bool,
@@ -211,8 +251,11 @@ pub struct Dev {
 #[serde(rename_all = "camelCase")]
 pub struct Horizon {
     pub join_lookup: String,
+    #[serde(deserialize_with = "lenient")]
     pub join_timeout_ms: u64,
+    #[serde(deserialize_with = "lenient")]
     pub poll_seconds: u64,
+    #[serde(deserialize_with = "lenient")]
     pub admin_level: u8,
     pub schema: Schema,
 }
@@ -368,6 +411,14 @@ fn node_to_toml(node: &Node) -> Option<toml::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numbers_written_as_quoted_strings_are_read_as_numbers() {
+        let yaml = "api:\n  mojangBatchWindowSeconds: \"1\"\nstorage:\n  skinExpiresAfter: \"20\"\ncommands:\n  skinChangeCooldown: \"5\"\n";
+        let c = Config::parse_layers(Some(yaml), "").unwrap();
+        assert_eq!(c.api.mojang_batch_window_seconds, 1);
+        assert_eq!(c.storage.skin_expires_after, 20);
+    }
 
     #[test]
     fn default_parses_with_the_originals_defaults() {
@@ -526,6 +577,8 @@ database:
         assert!(c.login.offline_mode_warning.enabled);
         assert_eq!(c.messages.date_format, "dd MMMM yyyy");
         assert!(c.messages.per_issuer_locale);
+        assert_eq!(c.messages.locale, "en");
+        assert_eq!(c.messages.console_locale, "en");
         assert!(c.commands.force_default_permissions);
         assert_eq!(c.commands.skin_change_cooldown, 30);
         assert_eq!(c.commands.skin_error_cooldown, 5);

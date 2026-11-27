@@ -9,21 +9,22 @@
 //!   players and the console. The nodes of the original's permission registry are declared at gathering
 //!   (`DECLARED_NODES`, with Bukkit's defaults); `/sr` checks its admin nodes (`ADMIN_NODES`) with `permission_bool`.
 //! - The skins menu: `menu_clicked`, `menu_closed` and `host.open_menu` / `host.close_menu`. Items have
-//!   no names or lore (HMOD-GAP(item-display)); head textures and the glint are still missing.
-//! - Skin changes: `server_tick` drains the core's actions. Writing the profile textures and refreshing
-//!   the player have no API on main (HMOD-GAP(profile-write), HMOD-GAP(player-refresh)), so no skin is
-//!   applied. A reset to the default skin is still missing.
+//!   are built from SNBT with name, lore and head texture.
+//! - Skin changes: `server_tick` drains the core's actions: the profile `textures` are set (or removed for a
+//!   reset), then `player_apply_skin` shows the skin to everyone, the player included; the vehicle is kept
+//!   through the refresh when `remountPlayerOnSkinUpdate` is on.
 //! - The proxy's plugin messages: `sr:messagechannel` is a raw play channel (`play_raw`, arismoko #3209);
 //!   skin updates arrive through its handler and the ack goes out with `player.send_payload`.
 
 pub mod horizon_skinsrestorer_core;
+mod cmdkit;
 use crate::horizon_skinsrestorer_core::gui::MenuItem;
 use crate::horizon_skinsrestorer_core::property::Property;
 use crate::horizon_skinsrestorer_core::sound::Sound;
 use crate::horizon_skinsrestorer_core::{self as core, Action, Refresh};
 use mod_api::{
     Command, CommandArgumentValue, CommandSource, Flow, Hooks, Identifier, ItemStack,
-    IPayloadContext, IPayloadHandler, MenuClickedEvent, MenuClosedEvent, MenuReplace, NodeDefault,
+    IPayloadContext, IPayloadHandler, MenuClickedEvent, MenuClosedEvent, MenuReplace, ModServiceCallEvent, ModServiceError, NodeDefault,
     PayloadBytes, PayloadHandleError, PayloadId, PermissionGatherNodesEvent, PermissionLevel,
     PermissionNode, PermissionValueType, PlayerCommandsSentEvent, PlayerLoggedInEvent, PlayerLoggedOutEvent,
     RegisterCommandsEvent, Registrar, RegistrationContext, ResourcePackStatusEvent,
@@ -35,8 +36,7 @@ use mod_api::{
 const PROXY_CHANNEL: &str = "sr:messagechannel";
 
 /// The admin nodes of `/sr` (the core's `Sub::nodes`, and the Tab filter). Each is a typed Boolean node declared
-/// at gathering with the operator level 2 as its default. The old `skinsrestorer.admincommand.*` wildcard is not
-/// queried: a node name cannot contain `*`, so only the exact nodes are asked.
+/// at gathering with the operator level 2 as its default. The wildcards are declared nodes whose children are the group.
 const ADMIN_NODES: [&str; 4] = [
     "skinsrestorer.admincommand",
     "skinsrestorer.admin",
@@ -46,8 +46,7 @@ const ADMIN_NODES: [&str; 4] = [
 
 /// Every node of the original's `PermissionRegistry` plus its two groups (`skinsrestorer.player` and `skinsrestorer.admin`),
 /// with the default Bukkit gives them: the children of the player group are true for everyone (level 0), all others
-/// are operator-only (level 2). The groups' wildcards (`skinsrestorer.command.*`, `skinsrestorer.admincommand.*`) cannot be
-/// node names here; a permission plugin that grants a wildcard still needs to grant the nodes below.
+/// are operator-only (level 2). The groups and their wildcards are declared separately with their children.
 const DECLARED_NODES: &[(&str, u8)] = &[
     ("skinsrestorer.player", 0),
     ("skinsrestorer.admin", 2),
@@ -88,9 +87,76 @@ const DECLARED_NODES: &[(&str, u8)] = &[
     ("skinsrestorer.ownskin", 2),
 ];
 
+/// `PermissionGroup.PLAYER`'s nodes.
+const PLAYER_GROUP: [&str; 11] = [
+    "skinsrestorer.command",
+    "skinsrestorer.command.set",
+    "skinsrestorer.command.set.url",
+    "skinsrestorer.command.clear",
+    "skinsrestorer.command.undo",
+    "skinsrestorer.command.favourite",
+    "skinsrestorer.command.random",
+    "skinsrestorer.command.update",
+    "skinsrestorer.command.search",
+    "skinsrestorer.command.edit",
+    "skinsrestorer.command.gui",
+];
+
+/// `PermissionGroup.ADMIN`'s own nodes (the player group is added as a parent).
+const ADMIN_GROUP: [&str; 20] = [
+    "skinsrestorer.admincommand",
+    "skinsrestorer.command.set.other",
+    "skinsrestorer.command.clear.other",
+    "skinsrestorer.command.undo.other",
+    "skinsrestorer.command.favourite.other",
+    "skinsrestorer.command.random.other",
+    "skinsrestorer.command.update.other",
+    "skinsrestorer.admincommand.status",
+    "skinsrestorer.admincommand.drop",
+    "skinsrestorer.admincommand.info",
+    "skinsrestorer.admincommand.applyskin",
+    "skinsrestorer.admincommand.createcustom",
+    "skinsrestorer.admincommand.skull.get",
+    "skinsrestorer.admincommand.skull.get.other",
+    "skinsrestorer.admincommand.skull.get.url",
+    "skinsrestorer.admincommand.skull.random",
+    "skinsrestorer.admincommand.skull.random.other",
+    "skinsrestorer.bypasscooldown",
+    "skinsrestorer.bypassdisabled",
+    "skinsrestorer.admincommand.reload",
+];
+
 /// The typed node for one admin node name.
 fn admin_node(name: &str) -> PermissionNode {
     PermissionNode::new(name, PermissionValueType::Boolean)
+}
+
+/// `%skinsrestorer_...%` for the placeholderapi mod (SRPlaceholderAPIExpansion).
+#[cfg(feature = "placeholderapi")]
+struct Expansion;
+
+#[cfg(feature = "placeholderapi")]
+impl placeholderapi::Expansion for Expansion {
+    fn identifier(&self) -> &str {
+        "skinsrestorer"
+    }
+    fn author(&self) -> &str {
+        "knat, AlexProgrammerDE, Th3Tr0LLeR, McLive, DoNotSpamPls"
+    }
+    fn version(&self) -> &str {
+        env!("CARGO_PKG_VERSION")
+    }
+    fn placeholders(&self) -> Vec<String> {
+        ["skin_name", "skin_name_or_empty", "skin_name_or_player_name", "texture_url", "texture_url_or_empty",
+            "texture_url_or_steve", "texture_url_or_alex", "texture_id", "texture_id_or_empty", "texture_id_or_steve",
+            "texture_id_or_alex"]
+            .iter()
+            .map(|p| format!("%skinsrestorer_{p}%"))
+            .collect()
+    }
+    fn on_request(&self, player: Option<u128>, params: &str) -> Option<String> {
+        core::placeholder(player, params)
+    }
 }
 
 #[derive(Default)]
@@ -178,44 +244,24 @@ fn sound_source(category: &str) -> Option<SoundSource> {
     })
 }
 
-/// Puts `property` into the player's profile, so that every list entry and the player's own client carry
-/// it. A reset to the default skin (None) has no API on arismoko: it answers false and the action stops
-/// here, so the skin stays as it was.
-// TODO(arismoko-api: player_clear_profile_property): a None property (no textures) cannot be written;
-// the reset to the default skin is skipped.
-// HMOD-GAP(profile-write): main has no setter for a player's profile properties (`textures`). Every skin
-// change is refused here, so no skin is applied at all; the core's actions still run without it.
+/// Puts `property` into the player's profile (`player_set_profile_property`); no skin (reset to the default
+/// skin) drops the mod's own `textures` again (`player_remove_profile_property`).
 fn set_profile_textures(host: &mut dyn ServerHost, player: u128, property: Option<&Property>) -> bool {
     let Some(p) = host.player(player) else {
         return false;
     };
-    // Needs `PlayerRef::set_profile_property` (host `player_set_profile_property`: arismoko/horizon #17923,
-    // merged upstream, not in the pinned SDK yet).
-    #[cfg(feature = "horizon_profile_api")]
-    {
-        return match property {
-            Some(prop) => p.set_profile_property(host, "textures", &prop.value, prop.signature.as_deref()),
-            // A reset to the default skin has no clear call: an empty value shows the default skin.
-            None => p.set_profile_property(host, "textures", "", None),
-        };
-    }
-    #[cfg(not(feature = "horizon_profile_api"))]
-    {
-        let _ = (p, property);
-        false
+    match property {
+        Some(prop) => p.set_profile_property(host, "textures", &prop.value, prop.signature.as_deref()),
+        None => p.remove_profile_property(host, "textures"),
     }
 }
 
-/// Shows the player's changed skin to everyone who sees them (`player_refresh`: hidden and shown again
-/// over two ticks). Their own view keeps the old skin until they change level or join again.
-// HMOD-GAP(player-refresh): main has no per-player tracker refresh; the new skin is not shown to others.
+/// Shows the player's changed skin to everyone, themselves included (`player_apply_skin`: the others get
+/// the player again, the player's own client its own list entry again).
 fn refresh_player(host: &mut dyn ServerHost, player: u128) {
-    #[cfg(feature = "horizon_profile_api")]
     if let Some(p) = host.player(player) {
-        let _ = p.refresh(host);
+        let _ = p.apply_skin(host);
     }
-    #[cfg(not(feature = "horizon_profile_api"))]
-    let _ = (host, player);
 }
 
 /// One skin change, as the core decided it (`server.*OnSkinUpdate`, `server.sound`). Same order as the
@@ -228,18 +274,41 @@ fn apply(host: &mut dyn ServerHost, player: u128, property: Option<&Property>, r
         return;
     }
     let entity = p.entity();
-    // TODO(arismoko-api: dismount): entity_stop_riding covers the dismount without a remount; the
-    // remount (keeping the vehicle through the refresh) has no API yet.
-    if refresh.dismount && !refresh.remount {
+    // `remountPlayerOnSkinUpdate`: the player is put back on the vehicle after the refresh.
+    let vehicle = if refresh.dismount { entity.vehicle(&*host) } else { None };
+    if refresh.dismount {
         let _ = entity.stop_riding(host);
     }
     if refresh.dismount_passengers {
         let _ = entity.eject_passengers(host);
     }
     refresh_player(host, player);
+    if refresh.remount {
+        if let Some(vehicle) = vehicle {
+            let _ = entity.start_riding(host, vehicle, false);
+        }
+    }
     if let Some(sound) = &refresh.sound {
         play_sound(host, player, sound);
     }
+}
+
+/// `SkinApplyEvent` for the mods that subscribed through the `skinsrestorer:api` service: None cancels.
+fn fire_skin_apply(host: &mut dyn ServerHost, player: u128, mut property: Option<Property>) -> Option<Option<Property>> {
+    use crate::horizon_skinsrestorer_core::api::{apply_event, parse_verdict, Verdict};
+    for id in core::api_subscribers() {
+        let line = apply_event(player, property.as_ref());
+        match host.commands().call_mod_service(&format!("{id}:skinsrestorer_event"), line.as_bytes()) {
+            Ok(reply) => match parse_verdict(&String::from_utf8_lossy(&reply)) {
+                Verdict::Cancel => return None,
+                Verdict::Set(p) => property = p,
+                Verdict::Keep => {}
+            },
+            Err(ModServiceError::ProviderNotLoaded) => core::api_unsubscribe(&id),
+            Err(_) => {}
+        }
+    }
+    Some(property)
 }
 
 /// `server.sound`, to the player alone.
@@ -362,7 +431,12 @@ fn apply_actions(host: &mut dyn ServerHost, actions: Vec<Action>) {
                 player,
                 property,
                 refresh,
-            } => apply(host, player, property.as_ref(), &refresh),
+            } => {
+                // `SkinApplyEvent`: subscribers may cancel the apply or replace the property.
+                if let Some(property) = fire_skin_apply(host, player, property) {
+                    apply(host, player, property.as_ref(), &refresh);
+                }
+            }
             Action::OpenMenu {
                 player,
                 rows,
@@ -414,6 +488,26 @@ fn apply_actions(host: &mut dyn ServerHost, actions: Vec<Action>) {
     }
 }
 
+/// `<uuid as 32 hex digits, or -> <params>` of the `skinsrestorer:placeholder` service.
+fn placeholder_request(text: &str) -> Option<(Option<u128>, &str)> {
+    let (who, params) = text.split_once(' ')?;
+    let player = if who == "-" { None } else { Some(u128::from_str_radix(who, 16).ok()?) };
+    Some((player, params.trim()))
+}
+
+/// Paper hides `/sr` from a player holding none of the admin nodes: typing it answers as for an unknown command.
+fn hidden_from(is_player: bool, holds_an_admin_node: bool) -> bool {
+    is_player && !holds_an_admin_node
+}
+
+/// The two lines of vanilla's unknown-command error for the typed line (the reason, then the line with the marker).
+fn unknown_command(typed: &str) -> [Text; 2] {
+    [
+        Text::translate("command.unknown.command", vec![]),
+        Text::literal(typed.trim_start_matches('/').to_owned()).append(Text::translate("command.context.here", vec![])),
+    ]
+}
+
 /// One line of a `/sr` answer, to the sender's feedback (the console's log for the console).
 fn reply(host: &mut dyn ServerHost, line: &str) {
     let text = plain(host, line);
@@ -428,19 +522,52 @@ impl Hooks for Mod {
         payloads
             .registrar("1")
             .play_raw(PayloadId(PROXY_CHANNEL.into()), Some(std::sync::Arc::new(ProxyInbox)));
+        cmdkit::register(registrar);
     }
 
     /// Declares the nodes of the original's permission registry, each with its Bukkit default (`DECLARED_NODES`).
     fn permission_gather_nodes(&self, event: &mut PermissionGatherNodesEvent<'_>) {
         for &(name, level) in DECLARED_NODES {
+            if name == "skinsrestorer.player" || name == "skinsrestorer.admin" {
+                continue;
+            }
             let _ = event.nodes.add(
                 admin_node(name),
                 NodeDefault::Level(PermissionLevel::from_level(i32::from(level))),
             );
         }
+        // The original's two groups (`PermissionGroup`): a base node and a wildcard node that both grant the
+        // group's nodes; the admin group also holds the player group.
+        let player: Vec<PermissionNode> = PLAYER_GROUP.iter().map(|n| admin_node(n)).collect();
+        let mut admin: Vec<PermissionNode> = ADMIN_GROUP.iter().map(|n| admin_node(n)).collect();
+        admin.push(admin_node("skinsrestorer.player"));
+        let user = NodeDefault::Level(PermissionLevel::from_level(0));
+        let staff = NodeDefault::Level(PermissionLevel::from_level(2));
+        for name in ["skinsrestorer.player", "skinsrestorer.command.*"] {
+            let _ = event.nodes.add_with_children(admin_node(name), user.clone(), &player);
+        }
+        for name in ["skinsrestorer.admin", "skinsrestorer.admincommand.*"] {
+            let _ = event.nodes.add_with_children(admin_node(name), staff.clone(), &admin);
+        }
+    }
+
+    /// The services other mods call: `skinsrestorer:api` (`horizon_skinsrestorer_core::api`).
+    fn mod_service_call(&self, _: &mut dyn ServerHost, event: &mut ModServiceCallEvent<'_>) -> Option<PayloadBytes> {
+        let text = std::str::from_utf8(&event.payload.0).ok()?;
+        match event.service {
+            "skinsrestorer:api" => Some(PayloadBytes(core::api_call(text).into_bytes())),
+            // The placeholderapi mod's `%skinsrestorer_*%`: payload `<uuid as 32 hex digits, or -> <params>`.
+            "skinsrestorer:placeholder" => {
+                let (player, params) = placeholder_request(text)?;
+                core::placeholder(player, params).map(|v| PayloadBytes(v.into_bytes()))
+            }
+            _ => None,
+        }
     }
 
     fn server_about_to_start(&self, _: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
+        #[cfg(feature = "placeholderapi")]
+        let _ = placeholderapi::register(Box::new(Expansion));
         // Builds the core now (config, recommended skins, storage), not on the first tick.
         let _ = core::admin_level();
     }
@@ -448,13 +575,15 @@ impl Hooks for Mod {
     fn register_commands(&self, _: &mut dyn ServerHost, event: &mut RegisterCommandsEvent<'_>) {
         // SRProxyCommand: `/sr` and `/skinsrestorer`, each with `help [query]`, `status`, `dump`. Level 0,
         // as the permission nodes differ per subcommand; run_mod_command checks them.
+        // `help [query]` completes the syntaxes the sender may run (`tab_complete`), so the query is a registered text.
         for root in ["sr", "skinsrestorer"] {
             event.commands.push(Command::new(root));
-            for tail in ["help [query:text]", "status", "dump"] {
-                event.commands.push(Command::new(&format!("{root} {tail}")));
+            for tail in COMMAND_TAILS {
+                event.commands.push(Command::new(&cmdkit::ask(&format!("{root} {tail}"), "skinsrestorer")));
             }
         }
     }
+
 
     /// Tab: `/sr` and `/skinsrestorer` are listed only for a sender with one of the admin nodes of
     /// `core::Sub::nodes` (the same nodes `run_mod_command` checks; the console is not a player here).
@@ -498,9 +627,9 @@ impl Hooks for Mod {
             }
         };
         let mut line = event.command.literals[1..].join(" ");
-        if let Some(CommandArgumentValue::String(query)) = event.command.argument("query") {
+        if let Some(query) = event.command.argument("query").and_then(cmdkit::value_text) {
             line.push(' ');
-            line.push_str(query);
+            line.push_str(&query);
         }
         // Admin nodes (skinsrestorer.admin*) are the permission provider's answer, or the operator level 2
         // without one. Other nodes are open to everyone; the console has every node. The typed queries need
@@ -513,6 +642,13 @@ impl Hooks for Mod {
                         granted.push(name);
                     }
                 }
+            }
+            if hidden_from(player.is_some(), !granted.is_empty()) {
+                let typed = event.command.literals.join(" ");
+                for text in unknown_command(&typed) {
+                    let _ = host.commands().feedback(text);
+                }
+                return Flow::Cancel;
             }
             let allowed = move |node: &str| {
                 !node.starts_with("skinsrestorer.admin")
@@ -546,7 +682,8 @@ impl Hooks for Mod {
             }
         }
         let allowed = |node: &str| !node.starts_with("skinsrestorer.admin") || granted.iter().any(|g| *g == node);
-        let start = event.command.rfind(' ').map_or(0, |i| i + 1);
+        // The query is the rest of the line (a syntax such as `sr dump` has a space of its own).
+        let start = event.command.find(' ').and_then(|i| event.command[i + 1..].find(' ').map(|j| i + 1 + j + 1)).unwrap_or(0);
         let end = event.command.len();
         for name in core::help_suggestions(&allowed) {
             event.suggestions.push(Suggestion::new((start, end), name));
@@ -568,8 +705,7 @@ impl Hooks for Mod {
 
     fn player_logged_in(&self, host: &mut dyn ServerHost, event: &mut PlayerLoggedInEvent<'_>) {
         // The core only answers messages (ack, menu, skull) of a player it knows. The forwarded textures
-        // come from the profile. A replacement the join lookup returns is written below only with the
-        // feature `horizon_profile_api` (HMOD-GAP(profile-write) until the pinned SDK has upstream #17923).
+        // come from the profile. A replacement the join lookup returns is written below.
         let forwarded = host
             .player(event.player)
             .and_then(|p| p.profile(&*host))
@@ -581,12 +717,9 @@ impl Hooks for Mod {
             })
             .map(|prop| Property::new(prop.value, prop.signature));
         let replacement = core::joining(event.player, event.name, forwarded);
-        #[cfg(feature = "horizon_profile_api")]
         if let Some(property) = replacement {
             set_profile_textures(host, event.player, property.as_ref());
         }
-        #[cfg(not(feature = "horizon_profile_api"))]
-        let _ = replacement;
     }
 
     fn player_logged_out(&self, _: &mut dyn ServerHost, event: &mut PlayerLoggedOutEvent<'_>) {
@@ -617,9 +750,53 @@ impl Hooks for Mod {
     }
 }
 
+/// The sub commands of `/sr` (`SRProxyCommand`: `help [query]`, `status`, `dump`).
+const COMMAND_TAILS: [&str; 3] = ["help [query:text]", "status", "dump"];
+
+#[cfg(test)]
+mod tree_tests {
+    use super::*;
+
+    #[test]
+    fn the_sub_commands_of_the_original_are_in_the_tree() {
+        let usages: Vec<String> = COMMAND_TAILS.iter().map(|t| format!("sr {t}")).collect();
+        let paths = cmdkit::literal_paths(&usages);
+        for sub in ["help", "status", "dump"] {
+            assert!(paths.contains(&format!("sr {sub}")), "sr {sub}");
+        }
+        assert_eq!(cmdkit::ask("sr help [query:text]", "skinsrestorer"), "sr help [query:skinsrestorer:text]");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_placeholder_service_payload_is_a_uuid_and_the_params() {
+        assert_eq!(placeholder_request("00000000000000000000000000000001 skin_name"), Some((Some(1), "skin_name")));
+        assert_eq!(placeholder_request("- texture_url_or_steve"), Some((None, "texture_url_or_steve")));
+        assert_eq!(placeholder_request("zz skin_name"), None);
+    }
+
+    #[test]
+    fn a_player_without_an_admin_node_gets_the_unknown_command_not_the_permission_line() {
+        // Paper (round 2 DIFF): `/sr` and `/skinsrestorer` without permission -> "command.unknown.command srcommand.context.here".
+        assert!(hidden_from(true, false));
+        assert!(!hidden_from(true, true));
+        assert!(!hidden_from(false, false), "the console is never hidden from");
+        let lines = unknown_command("/sr");
+        assert_eq!(format!("{:?}", lines[0]).contains("command.unknown.command"), true);
+        assert_eq!(format!("{:?}", lines[1]).contains("command.context.here"), true);
+    }
+
+    #[test]
+    fn group_nodes_are_declared() {
+        for n in PLAYER_GROUP.iter().chain(ADMIN_GROUP.iter()) {
+            assert!(DECLARED_NODES.iter().any(|(d, _)| d == n), "{n}");
+        }
+        assert_eq!(PLAYER_GROUP.len(), 11);
+    }
 
     #[test]
     fn texts_become_snbt_compounds() {

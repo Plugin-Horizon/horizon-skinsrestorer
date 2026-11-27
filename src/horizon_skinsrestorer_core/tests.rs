@@ -214,14 +214,39 @@ fn permissions_follow_the_original() {
     assert_eq!(command(Some(P), "status extra", &|_| true)[0], invalid_syntax("/sr status"));
 }
 
+fn plain(line: &str) -> String {
+    let mut out = String::new();
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\u{a7}' {
+            chars.next();
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 #[test]
-fn help_lists_the_commands_and_filters_by_query() {
-    let all = help_lines("");
-    assert_eq!(all.len(), 4);
-    assert!(all.iter().any(|l| l.contains("/sr status") && l.contains("Checks the API services")));
+fn help_lists_the_commands_as_the_cloud_help_does() {
+    // Paper, `/sr`: "----------------- Help (1/1) ----------------- | Showing search results for query: "/" |
+    // └─ Available Commands: | ├─ /sr dump | ├─ /sr help [query] | └─ /sr status | ----...----" (46 dashes)
+    let all: Vec<String> = help_lines("").iter().map(|l| plain(l)).collect();
+    assert_eq!(
+        all,
+        vec![
+            "----------------- Help (1/1) -----------------".to_owned(),
+            "Showing search results for query: \"/\"".to_owned(),
+            "\u{2514}\u{2500} Available Commands:".to_owned(),
+            "\u{251c}\u{2500} /sr dump".to_owned(),
+            "\u{251c}\u{2500} /sr help [query]".to_owned(),
+            "\u{2514}\u{2500} /sr status".to_owned(),
+            "-".repeat(46),
+        ]
+    );
     let some = help_lines("dump");
-    assert_eq!(some.len(), 2);
-    assert!(some[1].contains("/sr dump"));
+    assert_eq!(some.len(), 5);
+    assert!(plain(&some[3]).ends_with("/sr dump"));
 }
 
 #[test]
@@ -414,5 +439,10 @@ fn help_lists_only_what_the_sender_may_run() {
     let lines = command(Some(1), "help", &|n| n == "skinsrestorer.admincommand" || only_status(n));
     assert!(lines.iter().any(|l| l.contains("/sr status")));
     assert!(!lines.iter().any(|l| l.contains("/sr dump")));
-    assert_eq!(help_suggestions(&only_status), vec!["status".to_owned()]);
+    assert_eq!(help_suggestions(&only_status), vec!["sr status".to_owned()]);
+    // Paper: `/sr help ` completes `sr`, `sr dump`, `sr help [query]`, `sr status`.
+    assert_eq!(
+        help_suggestions(&|_| true),
+        vec!["sr".to_owned(), "sr dump".to_owned(), "sr help [query]".to_owned(), "sr status".to_owned()]
+    );
 }
