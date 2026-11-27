@@ -1,6 +1,6 @@
 id = "skinsrestorer"
 name = "SkinsRestorer"
-version = "0.2.0"
+version = "1.1.0"
 description = "Backend side of SkinsRestorer in proxy mode: skin selection, /sr, the skins menu. Port in progress (see PORT_NOTES.md)."
 authors = ["LionSpacer"]
 api = "0.2"

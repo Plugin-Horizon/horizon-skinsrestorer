@@ -156,6 +156,10 @@ pub type Row = Vec<Option<String>>;
 pub trait Sql: Send + Sync {
     /// The first row the statement returns.
     fn first_row(&self, sql: &str, binds: &[Option<String>]) -> Result<Option<Row>, String>;
+    /// Runs a statement that changes data (the API's `set...`/`remove...` calls).
+    fn execute(&self, _sql: &str, _binds: &[Option<String>]) -> Result<(), String> {
+        Err("this storage cannot write".into())
+    }
 }
 
 /// Reads selections and skins through [`Sql`].
@@ -273,6 +277,121 @@ impl Storage {
     }
 }
 
+/// The writes of the API (`PlayerStorage.set...`, `SkinStorage.set.../remove...`), as `MySQLAdapter`
+/// does them. The table names follow the default schema (`{prefix}players` ...).
+impl Storage {
+    fn t(&self, name: &str) -> String {
+        format!("{}{name}", self.statements.prefix)
+    }
+
+    fn name_of(&self, k: SkinType) -> &str {
+        let s = &self.statements.schema;
+        match k {
+            SkinType::Player => &s.type_player,
+            SkinType::Url => &s.type_url,
+            SkinType::Custom => &s.type_custom,
+            SkinType::Legacy => &s.type_legacy,
+        }
+    }
+
+    fn put(&self, sql: String, binds: Vec<Option<String>>) -> Result<(), String> {
+        self.sql.execute(&sql, &binds)
+    }
+
+    /// `PlayerStorage.setSkinIdOfPlayer`.
+    pub fn set_selection(&self, player: u128, sel: &Selection) -> Result<(), String> {
+        let variant = if sel.kind == SkinType::Url { sel.variant.clone() } else { None };
+        let (id, ty) = (Some(sel.identifier.clone()), Some(self.name_of(sel.kind).to_owned()));
+        self.put(
+            format!(
+                "INSERT INTO {} (uuid, skin_identifier, skin_type, skin_variant, offline_mode_warning_dismissed) VALUES (?, ?, ?, ?, FALSE) ON DUPLICATE KEY UPDATE skin_identifier=?, skin_type=?, skin_variant=?",
+                self.t("players")
+            ),
+            vec![Some(self.statements.uuid(player)), id.clone(), ty.clone(), variant.clone(), id, ty, variant],
+        )
+    }
+
+    /// `PlayerStorage.removeSkinIdOfPlayer`: the selection goes, the row stays.
+    pub fn clear_selection(&self, player: u128) -> Result<(), String> {
+        self.put(
+            format!(
+                "INSERT INTO {} (uuid, skin_identifier, skin_type, skin_variant, offline_mode_warning_dismissed) VALUES (?, NULL, NULL, NULL, FALSE) ON DUPLICATE KEY UPDATE skin_identifier=NULL, skin_type=NULL, skin_variant=NULL",
+                self.t("players")
+            ),
+            vec![Some(self.statements.uuid(player))],
+        )
+    }
+
+    /// `SkinStorage.setPlayerSkinData`.
+    pub fn set_player_skin(&self, player: u128, name: &str, p: &Property, timestamp: i64) -> Result<(), String> {
+        let (n, v, sg, ts) = (Some(name.to_owned()), Some(p.value.clone()), Some(p.signature.clone().unwrap_or_default()), Some(timestamp.to_string()));
+        self.put(
+            format!(
+                "INSERT INTO {} (uuid, last_known_name, value, signature, timestamp) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE last_known_name=?, value=?, signature=?, timestamp=?",
+                self.t("player_skins")
+            ),
+            vec![Some(self.statements.uuid(player)), n.clone(), v.clone(), sg.clone(), ts.clone(), n, v, sg, ts],
+        )
+    }
+
+    /// `SkinStorage.setCustomSkinData`: the name is stored lower case, the given one as display name.
+    pub fn set_custom_skin(&self, name: &str, p: &Property) -> Result<(), String> {
+        let (d, v, sg) = (Some(name.to_owned()), Some(p.value.clone()), Some(p.signature.clone().unwrap_or_default()));
+        self.put(
+            format!(
+                "INSERT INTO {} (name, display_name, value, signature) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE display_name=?, value=?, signature=?",
+                self.t("custom_skins")
+            ),
+            vec![Some(name.to_lowercase()), d.clone(), v.clone(), sg.clone(), d, v, sg],
+        )
+    }
+
+    /// `SkinStorage.setURLSkinData`.
+    pub fn set_url_skin(&self, url: &str, mine_skin_id: Option<&str>, p: &Property, variant: &str) -> Result<(), String> {
+        let (m, v, sg) = (mine_skin_id.map(str::to_owned), Some(p.value.clone()), Some(p.signature.clone().unwrap_or_default()));
+        self.put(
+            format!(
+                "INSERT INTO {} (url, mine_skin_id, value, signature, skin_variant) VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE mine_skin_id=?, value=?, signature=?",
+                self.t("url_skins")
+            ),
+            vec![Some(url.to_owned()), m.clone(), v.clone(), sg.clone(), Some(variant.to_owned()), m, v, sg],
+        )
+    }
+
+    /// `SkinStorage.setURLSkinIndex`.
+    pub fn set_url_index(&self, url: &str, variant: &str) -> Result<(), String> {
+        self.put(
+            format!(
+                "INSERT INTO {} (url, skin_variant) VALUES (?, ?) ON DUPLICATE KEY UPDATE skin_variant=?",
+                self.t("url_index")
+            ),
+            vec![Some(url.to_owned()), Some(variant.to_owned()), Some(variant.to_owned())],
+        )
+    }
+
+    /// `SkinStorage.removeSkinData`.
+    pub fn remove_skin(&self, sel: &Selection) -> Result<(), String> {
+        let id = Some(sel.identifier.clone());
+        match sel.kind {
+            SkinType::Player => {
+                let u = crate::horizon_skinsrestorer_core::property::parse_uuid(&sel.identifier)
+                    .map(|u| self.statements.uuid(u))
+                    .unwrap_or_else(|| sel.identifier.clone());
+                self.put(format!("DELETE FROM {} WHERE uuid=?", self.t("player_skins")), vec![Some(u)])
+            }
+            SkinType::Url => self.put(
+                format!("DELETE FROM {} WHERE url=? AND skin_variant=?", self.t("url_skins")),
+                vec![id, Some(sel.variant.clone().unwrap_or_default())],
+            ),
+            SkinType::Custom => self.put(
+                format!("DELETE FROM {} WHERE name=?", self.t("custom_skins")),
+                vec![Some(sel.identifier.to_lowercase())],
+            ),
+            SkinType::Legacy => self.put(format!("DELETE FROM {} WHERE name=?", self.t("legacy_skins")), vec![id]),
+        }
+    }
+}
+
 /// A player's lookup.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Lookup {
@@ -288,6 +407,8 @@ pub struct MemorySql {
     pub rows: std::sync::Mutex<std::collections::HashMap<(String, Vec<Option<String>>), Row>>,
     pub fail: std::sync::atomic::AtomicBool,
     pub queries: std::sync::atomic::AtomicUsize,
+    /// The statements `execute` ran, in order (the tests' view of the writes).
+    pub executed: std::sync::Mutex<Vec<(String, Vec<Option<String>>)>>,
 }
 
 impl MemorySql {
@@ -318,11 +439,21 @@ impl Sql for MemorySql {
             .get(&(sql.to_owned(), binds.to_vec()))
             .cloned())
     }
+    fn execute(&self, sql: &str, binds: &[Option<String>]) -> Result<(), String> {
+        if self.fail.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err("database down".into());
+        }
+        self.executed.lock().unwrap().push((sql.to_owned(), binds.to_vec()));
+        Ok(())
+    }
 }
 
 impl<T: Sql + ?Sized> Sql for std::sync::Arc<T> {
     fn first_row(&self, sql: &str, binds: &[Option<String>]) -> Result<Option<Row>, String> {
         (**self).first_row(sql, binds)
+    }
+    fn execute(&self, sql: &str, binds: &[Option<String>]) -> Result<(), String> {
+        (**self).execute(sql, binds)
     }
 }
 

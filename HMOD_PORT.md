@@ -60,3 +60,5 @@ Round 4 (blind, permission nodes, config keys, AdminInfoListener)
 - AdminInfoListener: not ported, counted as closed. In the original the adapter sends the outdated-version notice (needs the update checker, not ported), the Java-17 notice (no Java on Horizon) and the offline-mode launcher warning, which returns at once in proxy mode. On this backend nothing is sent.
 - Not done: locale files (`plugins/SkinsRestorer/locales/*.json`), cloud's help layout, `messages.disablePrefix` and `perIssuerLocale` (no locale system yet).
 - Tests (blind, not run): the new defaults and the camelCase keys (`disableGUICommand`, `ifNoServerBlockCommand`) in src/horizon_skinsrestorer_core/config.rs.
+
+Round 2 (combined SDK, 2026-11-25): the `horizon_profile_api` gate is gone. Skins are written with `set_profile_property` (reset: `remove_profile_property`) and shown with `apply_skin`; the vehicle is restored with `start_riding` when `remountPlayerOnSkinUpdate` is on; `skinsrestorer.player/admin` and the `command.*`/`admincommand.*` wildcards are declared with children; `messages.locale`/`consoleLocale` are read. Item list: all items closed (n/a items documented).
