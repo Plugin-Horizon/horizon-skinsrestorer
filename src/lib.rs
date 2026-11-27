@@ -488,6 +488,13 @@ fn apply_actions(host: &mut dyn ServerHost, actions: Vec<Action>) {
     }
 }
 
+/// `<uuid as 32 hex digits, or -> <params>` of the `skinsrestorer:placeholder` service.
+fn placeholder_request(text: &str) -> Option<(Option<u128>, &str)> {
+    let (who, params) = text.split_once(' ')?;
+    let player = if who == "-" { None } else { Some(u128::from_str_radix(who, 16).ok()?) };
+    Some((player, params.trim()))
+}
+
 /// Paper hides `/sr` from a player holding none of the admin nodes: typing it answers as for an unknown command.
 fn hidden_from(is_player: bool, holds_an_admin_node: bool) -> bool {
     is_player && !holds_an_admin_node
@@ -546,11 +553,16 @@ impl Hooks for Mod {
 
     /// The services other mods call: `skinsrestorer:api` (`horizon_skinsrestorer_core::api`).
     fn mod_service_call(&self, _: &mut dyn ServerHost, event: &mut ModServiceCallEvent<'_>) -> Option<PayloadBytes> {
-        if event.service != "skinsrestorer:api" {
-            return None;
-        }
         let text = std::str::from_utf8(&event.payload.0).ok()?;
-        Some(PayloadBytes(core::api_call(text).into_bytes()))
+        match event.service {
+            "skinsrestorer:api" => Some(PayloadBytes(core::api_call(text).into_bytes())),
+            // The placeholderapi mod's `%skinsrestorer_*%`: payload `<uuid as 32 hex digits, or -> <params>`.
+            "skinsrestorer:placeholder" => {
+                let (player, params) = placeholder_request(text)?;
+                core::placeholder(player, params).map(|v| PayloadBytes(v.into_bytes()))
+            }
+            _ => None,
+        }
     }
 
     fn server_about_to_start(&self, _: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
@@ -759,6 +771,13 @@ mod tree_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_placeholder_service_payload_is_a_uuid_and_the_params() {
+        assert_eq!(placeholder_request("00000000000000000000000000000001 skin_name"), Some((Some(1), "skin_name")));
+        assert_eq!(placeholder_request("- texture_url_or_steve"), Some((None, "texture_url_or_steve")));
+        assert_eq!(placeholder_request("zz skin_name"), None);
+    }
 
     #[test]
     fn a_player_without_an_admin_node_gets_the_unknown_command_not_the_permission_line() {
